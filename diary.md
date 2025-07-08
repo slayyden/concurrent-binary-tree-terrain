@@ -14,8 +14,10 @@
  - [x] Fix synchronization validation errors
  - [ ] Enable depth test
  - [x] use multiple command buffers
- - [ ] refactor into multiple files
- - [ ] use mesh buffers
+ - [x] refactor into multiple files
+ - [x] use mesh buffers
+ - [ ] create projection matrices
+ - [ ] create more interesting vertex buffer
 
 # Design
 ## Vulkan Features

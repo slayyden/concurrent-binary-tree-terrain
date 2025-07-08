@@ -3,10 +3,11 @@ use ash::{
     Device, Entry,
     ext::debug_utils,
     khr::{surface, swapchain},
-    util::read_spv,
+    util::{Align, read_spv},
     vk,
 };
-use std::{cmp::max, error::Error, io::Cursor, os::raw::c_char, u64};
+use dirt_jam::*;
+use std::{cmp::max, error::Error, io::Cursor, os::raw::c_char, ptr::copy_nonoverlapping, u64};
 use winit::{
     application::ApplicationHandler,
     event::WindowEvent,
@@ -14,23 +15,6 @@ use winit::{
     raw_window_handle::{HasDisplayHandle, HasWindowHandle},
     window::{Window, WindowId},
 };
-
-// finds the index of the device memory type that matches the memory requirements and flags
-// this implicitly finds a heap as a memory type contains a heap index as well
-fn find_memorytype_index(
-    memory_req: &vk::MemoryRequirements,
-    memory_prop: &vk::PhysicalDeviceMemoryProperties,
-    flags: vk::MemoryPropertyFlags,
-) -> Option<u32> {
-    memory_prop.memory_types[..memory_prop.memory_type_count as usize]
-        .iter()
-        .enumerate()
-        .find(|(index, memory_type)| {
-            (1 << index) & memory_req.memory_type_bits != 0
-                && memory_type.property_flags & flags == flags
-        })
-        .map(|(index, _memory_type)| index as u32)
-}
 
 pub fn record_submit_commandbuffer<F: FnOnce(&Device, vk::CommandBuffer)>(
     device: &Device,
@@ -93,6 +77,7 @@ struct Vertex {
 
 #[repr(C)]
 struct PC {
+    view_project: [f32; 16],
     positions: vk::DeviceAddress,
 }
 
@@ -103,6 +88,7 @@ struct State {
     draw_command_buffers: [vk::CommandBuffer; 3],
     present_queue: vk::Queue,
     pipeline: vk::Pipeline,
+    pipeline_layout: vk::PipelineLayout,
     // the we can get any number of images above the minimum, length is unknown at comptime
     present_image_views: Vec<vk::ImageView>,
     present_images: Vec<vk::Image>,
@@ -117,6 +103,8 @@ struct State {
 
     resolution: vk::Extent2D,
     command_reuse_fences: [vk::Fence; 3],
+
+    vertex_buffer: AllocatedBuffer,
 }
 
 impl State {
@@ -221,6 +209,27 @@ impl State {
             );
 
             dev.cmd_begin_rendering(*cmdbuf, &rendering_info);
+
+            let push_constants = PC {
+                view_project: [
+                    1., 0., 0., 0., //r0
+                    0., 1., 0., 0., //r1
+                    0., 0., 1., 0., // r2
+                    0., 0., 0., 1., // r3
+                ],
+                positions: dev.get_buffer_device_address(
+                    &vk::BufferDeviceAddressInfo::default().buffer(self.vertex_buffer.buffer),
+                ),
+            };
+
+            // push constants
+            dev.cmd_push_constants(
+                *cmdbuf,
+                self.pipeline_layout,
+                vk::ShaderStageFlags::VERTEX,
+                0,
+                byteslice(&push_constants),
+            );
 
             // RENDERING CORE
             dev.cmd_set_viewport(*cmdbuf, 0, &[viewport]);
@@ -608,7 +617,7 @@ impl ApplicationHandler for App {
                 .expect("Create fence failed.");
 
             // ----------------------------------------------------------------
-            // semaphores
+            // semaphores and fences
             let semaphore_create_info = vk::SemaphoreCreateInfo::default();
 
             let present_complete_semaphore: [vk::Semaphore; 3] = std::array::from_fn(|_| {
@@ -633,6 +642,53 @@ impl ApplicationHandler for App {
                 )
                 .unwrap();
 
+            // ----------------------------------------------------------------
+            // create buffers
+            let vertex_positions = [
+                01., 1., 0.5, //v0
+                -1., 1., 0.5, //v1
+                0., -1., 0.5, //v2
+            ];
+            let vertex_buffer_size = (size_of::<f32>() * vertex_positions.len()) as u64;
+
+            let staging_buffer = AllocatedBuffer::new(
+                &device,
+                vertex_buffer_size,
+                device_memory_properties,
+                vk::BufferUsageFlags::TRANSFER_SRC,
+                vk::SharingMode::EXCLUSIVE,
+                vk::MemoryPropertyFlags::HOST_VISIBLE,
+            );
+
+            let staging_buffer_ptr = device
+                .map_memory(
+                    staging_buffer.allocation,
+                    0,
+                    vertex_buffer_size,
+                    vk::MemoryMapFlags::empty(),
+                )
+                .expect("Failed to map device memory.");
+
+            let mut staging_buffer_slice = Align::new(
+                staging_buffer_ptr,
+                align_of::<f32>() as u64,
+                vertex_buffer_size,
+            );
+            staging_buffer_slice.copy_from_slice(&vertex_positions);
+            device.unmap_memory(staging_buffer.allocation);
+
+            let vertex_buffer = AllocatedBuffer::new(
+                &device,
+                vertex_buffer_size,
+                device_memory_properties,
+                vk::BufferUsageFlags::TRANSFER_DST
+                    | vk::BufferUsageFlags::STORAGE_BUFFER
+                    | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
+                vk::SharingMode::EXCLUSIVE,
+                vk::MemoryPropertyFlags::DEVICE_LOCAL,
+            );
+
+            // initialization command buffer
             record_submit_commandbuffer(
                 &device,
                 setup_command_buffer,
@@ -666,8 +722,19 @@ impl ApplicationHandler for App {
                         &[],
                         &[layout_transition_barriers],
                     );
+
+                    let vertex_copy = vk::BufferCopy::default().size(vertex_buffer_size);
+                    device.cmd_copy_buffer(
+                        setup_command_buffer,
+                        staging_buffer.buffer,
+                        vertex_buffer.buffer,
+                        &[vertex_copy],
+                    );
                 },
             );
+
+            device.device_wait_idle().expect("Wait idle.");
+            staging_buffer.destroy(&device);
 
             let depth_image_view_info = vk::ImageViewCreateInfo::default()
                 .subresource_range(
@@ -787,12 +854,14 @@ impl ApplicationHandler for App {
                 present_images: present_images,
                 depth_image_view: depth_image_view,
                 pipeline: pipeline,
+                pipeline_layout: pipeline_layout,
                 present_complete_semaphore: present_complete_semaphore,
                 render_complete_semaphore: render_complete_semaphore,
                 frame_index: 0,
                 resolution: surface_resolution,
                 command_reuse_fences: command_reuse_fences,
                 frame_pace_semaphore: frame_pace_semaphore,
+                vertex_buffer: vertex_buffer,
             })
         }
     }
