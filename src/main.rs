@@ -16,6 +16,8 @@ use winit::{
     window::{Window, WindowId},
 };
 
+use std::sync::atomic::AtomicU32;
+
 pub fn record_submit_commandbuffer<F: FnOnce(&Device, vk::CommandBuffer)>(
     device: &Device,
     command_buffer: vk::CommandBuffer,
@@ -79,6 +81,10 @@ struct Vertex {
 struct PC {
     view_project: [f32; 16],
     positions: vk::DeviceAddress,
+}
+
+struct AtomicTest {
+    test: AtomicU32,
 }
 
 struct State {
