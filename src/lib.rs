@@ -673,17 +673,18 @@ const COMMAND_EDGE_LUT: [[[u8;
         4 /*number of potential commmands */]
 = [
     // CENTRAL_SPLIT
-    [[0, u8::MAX], [1, u8::MAX], [1, 0]],
+    [[0, 0], [1, 1], [1, 0]],
     // RIGHT_DOUBLE_SPLIT
-    [[2, 0], [1, u8::MAX], [1, 2]],
+    [[2, 0], [1, 1], [1, 2]],
     // LEFT_DOUBLE_SPLIT
-    [[0, u8::MAX], [2, 1], [1, 0]],
+    [[0, 0], [2, 1], [1, 0]],
     // TRIPLE_SPLIT
     [[2, 0], [3, 1], [1, 2]],
 ];
 
 // given a split command and an edge index (NEXT, PREV, or TWIN)
-// return up to two allocation slots that touch the edge
+// return up to the allocation slots that touch each half of the edge
+// if the edge has not been split, these slots will be the same
 // the first slot appears on the left when viewing the triangle from the outside
 // with the specified edge at the bottom and its opposing vertex at the top
 pub fn get_edge_slots(command: u32, edge_type: usize) -> [u8; 2] {
@@ -721,6 +722,21 @@ struct SplitEdge {
     neighbor_index: u32, // index of neighbor allocation slot
 }
 
+pub fn link_siblings(prev_sibling: u32, next_sibling: u32, neighbor_buffer: &mut [[u32; 3]]) {
+    neighbor_buffer[prev_sibling as usize][NEXT] = next_sibling;
+    neighbor_buffer[next_sibling as usize][PREV] = prev_sibling;
+}
+
+pub fn allocate_children(
+    curr_index: u32,
+    bisector_data: Vec<Bisector>,
+    heapid_buffer: &mut Vec<u32>,
+    cbt: &mut CBT,
+) {
+    // allocate on CBT based on the bisector data
+    // write new heapids
+}
+
 // convention: when looking at the bisector from the outside,
 // with the newest vertex (of the child) on top, splitedge x is left of splitedge y
 struct EdgeData {
@@ -729,74 +745,103 @@ struct EdgeData {
 }
 pub fn update_pointers(
     curr_index: u32,
-    bisector_data: Vec<Bisector>,
-    neighbor_buffer: &mut Vec<[u32; 3]>,
+    bisector_data: &[Bisector],
+    neighbor_buffer: &mut [[u32; 3]],
 ) {
     let curr_bisector = &bisector_data[curr_index as usize];
     let curr_command = curr_bisector.command.load(Ordering::Relaxed);
     debug_assert!(curr_command != NO_SPLIT);
     let neighbors = neighbor_buffer[curr_index as usize];
+
+    // iterate over EDGES of the parent bisector that is being split
     for (bisector_edge_idx, neighbor_index) in neighbors.into_iter().enumerate() {
+        // boundary edge, we don't have to do anything
         if neighbor_index == u32::MAX {
             continue;
         }
         let neighbor = &bisector_data[neighbor_index as usize];
         let neighbor_command = neighbor.command.load(Ordering::Relaxed);
 
-        if neighbor_command == NO_SPLIT {
-            todo!()
-        }
-
-        let neighbor_neighbors = neighbor_buffer[neighbor_index as usize];
-
-        let neighbor_edge = if neighbor_neighbors[NEXT] == curr_index {
-            NEXT
-        } else if neighbor_neighbors[PREV] == curr_index {
-            PREV
-        } else {
-            debug_assert!(neighbor_neighbors[TWIN] == curr_index);
-            TWIN
+        let neighbor_edge = {
+            let neighbor_neighbors = neighbor_buffer[neighbor_index as usize];
+            if neighbor_neighbors[NEXT] == curr_index {
+                NEXT
+            } else if neighbor_neighbors[PREV] == curr_index {
+                PREV
+            } else {
+                debug_assert!(neighbor_neighbors[TWIN] == curr_index);
+                TWIN
+            }
         };
         let bisector_slots = get_edge_slots(curr_command, bisector_edge_idx);
         let neighbor_slots = get_edge_slots(neighbor_command, neighbor_edge);
         let edge_types = get_child_edge_types(curr_command, bisector_edge_idx);
-        let curr_edge_data = EdgeData {
-            // neighbor slots are reversed curr X must map to neighbor Y and vice versa
-            //        / \
-            //       / | \
-            //      / Y|X \
-            //     +---|---+
-            //      \ X|Y /
-            //       \ | /
-            //        \ /
-            x: SplitEdge {
-                slot: curr_bisector.allocation_slots[bisector_slots[0] as usize],
-                edge_type: edge_types[0],
-                neighbor_index: neighbor.allocation_slots[neighbor_slots[1] as usize],
-            },
-            y: SplitEdge {
-                slot: curr_bisector.allocation_slots[bisector_slots[1] as usize],
-                edge_type: edge_types[1],
-                neighbor_index: neighbor.allocation_slots[neighbor_slots[0] as usize],
-            },
-        };
 
-        // update neighbor buffer
-        neighbor_buffer[curr_edge_data.x.slot as usize][curr_edge_data.x.edge_type as usize] =
-            curr_edge_data.x.neighbor_index;
-        neighbor_buffer[curr_edge_data.y.slot as usize][curr_edge_data.y.edge_type as usize] =
-            curr_edge_data.y.neighbor_index;
+        // write external pointers for first allocated slot
+        let slot = curr_bisector.allocation_slots[bisector_slots[0] as usize] as usize;
+        let edge_type = edge_types[0] as usize;
+        let neighbor_index = neighbor.allocation_slots[neighbor_slots[1] as usize]; // left and right are flipped from the neighbor's perspective
+        neighbor_buffer[slot][edge_type] = neighbor_index;
+
+        // this edge was split, write pointers to the second child
+        if bisector_slots[0] != bisector_slots[1] {
+            let slot = curr_bisector.allocation_slots[bisector_slots[1] as usize] as usize;
+            let edge_type = edge_types[1] as usize;
+            let neighbor_index = neighbor.allocation_slots[neighbor_slots[0] as usize];
+            neighbor_buffer[slot][edge_type] = neighbor_index;
+        }
+        // non-split tris are not dispatched, so we update them as well
+        else if neighbor_command == NO_SPLIT
+            // neighbor_buffer[neighbor_index] == curr_index by construction
+            && curr_index != slot as u32
+        {
+            neighbor_buffer[neighbor_index as usize][neighbor_edge] = slot as u32;
+        }
     }
 
     // update pointers from bisector children to other bisector children
+    // best to draw a picture for this
     if curr_command == CENTER_SPLIT {
-        neighbor_buffer[curr_bisector.allocation_slots[1] as usize][NEXT] =
-            curr_bisector.allocation_slots[0];
-        neighbor_buffer[curr_bisector.allocation_slots[0] as usize][PREV] =
-            curr_bisector.allocation_slots[1];
+        link_siblings(
+            curr_bisector.allocation_slots[1],
+            curr_bisector.allocation_slots[0],
+            neighbor_buffer,
+        );
     } else if curr_command == RIGHT_DOUBLE_SPLIT {
+        link_siblings(
+            curr_bisector.allocation_slots[0],
+            curr_bisector.allocation_slots[2],
+            neighbor_buffer,
+        );
+        neighbor_buffer[curr_bisector.allocation_slots[0] as usize][TWIN] =
+            curr_bisector.allocation_slots[1];
+        neighbor_buffer[curr_bisector.allocation_slots[1] as usize][PREV] =
+            curr_bisector.allocation_slots[0];
     } else if curr_command == LEFT_DOUBLE_SPLIT {
+        link_siblings(
+            curr_bisector.allocation_slots[2],
+            curr_bisector.allocation_slots[1],
+            neighbor_buffer,
+        );
+        neighbor_buffer[curr_bisector.allocation_slots[2] as usize][TWIN] =
+            curr_bisector.allocation_slots[0];
+        neighbor_buffer[curr_bisector.allocation_slots[0] as usize][NEXT] =
+            curr_bisector.allocation_slots[2];
     } else {
         debug_assert!(curr_command == TRIPLE_SPLIT);
+        link_siblings(
+            curr_bisector.allocation_slots[3],
+            curr_bisector.allocation_slots[1],
+            neighbor_buffer,
+        );
+        link_siblings(
+            curr_bisector.allocation_slots[0],
+            curr_bisector.allocation_slots[2],
+            neighbor_buffer,
+        );
+        neighbor_buffer[curr_bisector.allocation_slots[0] as usize][TWIN] =
+            curr_bisector.allocation_slots[0];
+        neighbor_buffer[curr_bisector.allocation_slots[0] as usize][TWIN] =
+            curr_bisector.allocation_slots[3];
     }
 }
