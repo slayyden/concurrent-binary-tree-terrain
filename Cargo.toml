@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+glam = { version = "0.30.5" }
 ash = { version = "0.38.0", features = ["linked"] }
 ash-window = "0.13.0"
 winit = "0.30"

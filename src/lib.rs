@@ -1,4 +1,11 @@
-use std::u32;
+use std::{
+    cmp::max,
+    ops::{Add, AddAssign, Div},
+    sync::atomic::{AtomicU32, AtomicUsize, Ordering},
+    u32,
+};
+
+use glam::*;
 
 use ash::{Device, vk};
 
@@ -394,5 +401,402 @@ mod tests {
         assert_eq!(cbt.zero_bit_to_id(19), 64 * 7 + 3);
         // end
         assert_eq!(cbt.zero_bit_to_id(20), u32::MAX);
+    }
+}
+
+const NO_SPLIT: u32 = 0;
+const CENTER_SPLIT: u32 = 1;
+const RIGHT_SPLIT: u32 = 1 << 1;
+const LEFT_SPLIT: u32 = 1 << 2;
+const RIGHT_DOUBLE_SPLIT: u32 = CENTER_SPLIT | RIGHT_SPLIT;
+const LEFT_DOUBLE_SPLIT: u32 = CENTER_SPLIT | LEFT_SPLIT;
+const TRIPLE_SPLIT: u32 = CENTER_SPLIT | RIGHT_SPLIT | LEFT_SPLIT;
+const INVALID_POINTER: u32 = u32::MAX;
+
+const NEXT: usize = 0;
+const PREV: usize = 1;
+const TWIN: usize = 2;
+
+const UNCHANGED_ELEMENT: u32 = 0;
+
+// use pure AoS for now
+pub struct Bisector {
+    heapid: u32,
+    state: u32,
+    command: AtomicU32,
+    allocation_slots: [u32; 4],
+    // next, prev, twin
+}
+
+pub fn heap_id_depth(heapid: u32) -> u32 {
+    return 32 - heapid.leading_zeros();
+}
+impl Bisector {
+    pub fn split_element(
+        &mut self,
+        curr_id: u32,                   // global thread index
+        bisector_data: &mut [Bisector], // list of bisectors (global ordering)
+        neighbors_buffer: &[[u32; 3]],  // list of neighbors (global ordering)
+        base_depth: u32,                // base depth of the cbt
+        memory_count: AtomicU32,        // memory pool
+        allocation_count: AtomicU32,    // how many bisectors need to allocate memory
+        allocation_buffer: &mut [u32],  // stores heapids of bisectors that need to allocate memory
+        heapid_buffer: &mut [u32],      // stores heapids of bisectors
+    ) {
+        let curr_neighbors = neighbors_buffer[curr_id as usize];
+
+        // check if we should release control to next neighbor
+        let next = curr_neighbors[NEXT];
+        if next != INVALID_POINTER {
+            let next_neighbors = neighbors_buffer[next as usize];
+            if next_neighbors[TWIN] == curr_id
+                && bisector_data[next as usize].state != UNCHANGED_ELEMENT
+            {
+                return;
+            }
+        }
+
+        // check if we should release control to prev neighbor
+        let prev = curr_neighbors[PREV];
+        if prev != INVALID_POINTER {
+            let prev_neighbors = neighbors_buffer[prev as usize];
+            if prev_neighbors[TWIN] == curr_id
+                && bisector_data[prev as usize].state != UNCHANGED_ELEMENT
+            {
+                return;
+            }
+        }
+
+        let current_depth = heap_id_depth(curr_id);
+
+        let twin_id = curr_neighbors[TWIN];
+        let max_required_memory =
+           // boundary
+            if
+            twin_id == INVALID_POINTER {
+            1
+            // perfect matching
+        } else if neighbors_buffer[twin_id as usize][TWIN] == curr_id {
+            2
+            // worst case: we must traverse up the tree
+        } else {
+            2 * (current_depth - base_depth) - 1
+        };
+
+        let remaining_memory = memory_count.fetch_sub(max_required_memory, Ordering::Relaxed);
+
+        if remaining_memory < max_required_memory {
+            memory_count.fetch_add(max_required_memory, Ordering::Relaxed);
+            return;
+        }
+
+        let base_pattern = self.command.fetch_or(CENTER_SPLIT, Ordering::Relaxed);
+        // another thread got to this bisector first
+        if base_pattern != NO_SPLIT {
+            memory_count.fetch_add(max_required_memory, Ordering::Relaxed);
+            return;
+        }
+
+        let target_location = allocation_count.fetch_add(1, Ordering::Relaxed);
+        allocation_buffer[target_location as usize] = curr_id;
+
+        let mut used_memory = 1;
+
+        // let mut previous_command = base_pattern;
+        let mut twin_id = twin_id;
+        let mut curr_id = curr_id;
+        let mut current_depth = current_depth;
+        // this is a recursive algorithm implemented as a loop
+        loop {
+            // base case: refinement edge is a boundary
+            if twin_id == INVALID_POINTER {
+                break;
+            }
+
+            // setup neighbor data for loop iteration
+            let twin_heapid = heapid_buffer[twin_id as usize];
+            let twin_bisector_data = &bisector_data[twin_id as usize];
+            let twin_depth = heap_id_depth(twin_heapid);
+            let twin_neighbors = neighbors_buffer[twin_id as usize];
+
+            // base case: we have a twin!
+            if twin_depth == current_depth {
+                let twin_previous_command = bisector_data[twin_id as usize]
+                    .command
+                    .fetch_or(CENTER_SPLIT, Ordering::Relaxed);
+
+                // twin needs to allocate for its split
+                if twin_previous_command == NO_SPLIT {
+                    let target_location = allocation_count.fetch_add(1, Ordering::Relaxed);
+                    allocation_buffer[target_location as usize] = twin_id;
+                    used_memory += 1;
+                }
+                break;
+            }
+            // twin must be split as part of compatibility chain
+            else {
+                // add another subidivision to the twin
+                // we need to splits because we are cutting into the twin from the side
+                // and save the twin's previous command
+                let twin_previous_command = if twin_neighbors[NEXT] == curr_id {
+                    twin_bisector_data
+                        .command
+                        .fetch_or(RIGHT_DOUBLE_SPLIT, Ordering::Relaxed)
+                } else {
+                    // twin_neighbors[PREV] = curr_id
+                    twin_bisector_data
+                        .command
+                        .fetch_or(LEFT_DOUBLE_SPLIT, Ordering::Relaxed)
+                };
+                // why is twin_neighbors[TWIN] != curr_id?
+
+                // twin was already split
+                // so we allocate memory for the one extra split the current bisector requested
+                if twin_previous_command != NO_SPLIT {
+                    used_memory += 1;
+                    break;
+                } else {
+                    // we need twin needs to allocate memory for at least 2 splits
+                    let target_location = allocation_count.fetch_add(1, Ordering::Relaxed);
+                    allocation_buffer[target_location as usize] = twin_id;
+
+                    used_memory += 2;
+
+                    // loop continues
+                    // we propagate the twin's split to its twin
+                    curr_id = twin_id;
+                    current_depth = twin_depth;
+                    twin_id = neighbors_buffer[curr_id as usize][TWIN];
+                }
+            }
+        }
+
+        memory_count.fetch_add(
+            max((max_required_memory as i32) - (used_memory as i32), 0) as u32,
+            Ordering::Relaxed,
+        );
+    }
+
+    pub fn heapid_to_vertices(
+        heapid: u32,
+        base_level: u32,
+        final_level: u32,
+        root_bisectors: &[[Vec3; 3]], // list of 3 triangles each with 3 verts
+    ) -> [Vec3; 3] {
+        let mask = (0xFFFF_FFFF as u32) << (base_level + 1);
+        let root_bisector_index = heapid & !mask;
+
+        let split_chain = heapid >> base_level;
+        let mut curr_bisector = root_bisectors[root_bisector_index as usize];
+        let mut peak_idx: i32 = 2; // index of vertex that is the peak
+
+        for i in 0..(final_level - base_level) {
+            let bit = (split_chain >> i) & 0b0000_0000_0000_0001;
+
+            let replacement_slot = if bit != 0 { peak_idx + 1 } else { peak_idx - 1 } % 3;
+            let refinement_edge = [
+                curr_bisector[(peak_idx + 1 % 3) as usize],
+                curr_bisector[(peak_idx + 2 % 3) as usize],
+            ];
+            let new_vertex = refinement_edge[0].midpoint(refinement_edge[1]);
+
+            curr_bisector[replacement_slot as usize] = new_vertex;
+            peak_idx = replacement_slot;
+        }
+
+        return curr_bisector;
+    }
+}
+
+struct Face {
+    v0: u32,
+    num_verts: u32,
+}
+
+struct HalfedgeMesh {
+    verts: Vec<Vec3>,
+
+    faces: Vec<Face>,
+    indices: Vec<u32>,
+
+    // halfedge data
+    next: Vec<u32>,
+    prev: Vec<u32>,
+    twin: Vec<u32>,
+}
+
+impl HalfedgeMesh {
+    pub fn new(
+        verts: Vec<Vec3>,
+        faces: Vec<Face>,
+        indices: Vec<u32>,
+        next: Vec<u32>,
+        prev: Vec<u32>,
+        twin: Vec<u32>,
+    ) -> Self {
+        Self {
+            verts: verts,
+            next: next,
+            prev: prev,
+            twin: twin,
+            faces: faces,
+            indices: indices,
+        }
+    }
+    pub fn create_root_bisectors(&self) -> Vec<[Vec3; 3]> {
+        let mut ret = Vec::<[Vec3; 3]>::with_capacity(self.next.len());
+        for face in self.faces.iter() {
+            // all bisectors share the midpoint of the face as v2
+            let mut face_midpoint = Vec3::new(0.0, 0.0, 0.0);
+            for vert_idx in face.v0..(face.v0 + face.num_verts) {
+                face_midpoint += self.verts[vert_idx as usize];
+            }
+            let face_midpoint = face_midpoint / Vec3::splat(face.num_verts as f32);
+
+            // get first 2 verts for each bisector
+            for vert_idx in face.v0..(face.v0 + face.num_verts - 1) {
+                let v0 = self.verts[vert_idx as usize];
+                let v1 = self.verts[(vert_idx + 1) as usize];
+
+                let root_bisector = [v0, v1, face_midpoint];
+                ret.push(root_bisector);
+            }
+        }
+
+        return ret;
+    }
+}
+
+const COMMAND_EDGE_LUT: [[[u8;
+        2 /* number of slots going to an edge */];
+        3 /* number of edges */];
+        4 /*number of potential commmands */]
+= [
+    // CENTRAL_SPLIT
+    [[0, u8::MAX], [1, u8::MAX], [1, 0]],
+    // RIGHT_DOUBLE_SPLIT
+    [[2, 0], [1, u8::MAX], [1, 2]],
+    // LEFT_DOUBLE_SPLIT
+    [[0, u8::MAX], [2, 1], [1, 0]],
+    // TRIPLE_SPLIT
+    [[2, 0], [3, 1], [1, 2]],
+];
+
+// given a split command and an edge index (NEXT, PREV, or TWIN)
+// return up to two allocation slots that touch the edge
+// the first slot appears on the left when viewing the triangle from the outside
+// with the specified edge at the bottom and its opposing vertex at the top
+pub fn get_edge_slots(command: u32, edge_type: usize) -> [u8; 2] {
+    debug_assert!(
+        command == CENTER_SPLIT
+            || command == RIGHT_DOUBLE_SPLIT
+            || command == LEFT_DOUBLE_SPLIT
+            || command == TRIPLE_SPLIT,
+    );
+    debug_assert!(edge_type == NEXT || edge_type == PREV || edge_type == TWIN);
+
+    return COMMAND_EDGE_LUT[(command / 2) as usize][edge_type as usize];
+}
+
+const NEXT_U8: u8 = 0;
+const PREV_U8: u8 = 1;
+const TWIN_U8: u8 = 2;
+const CHILD_EDGE_TYPE_LUT: [[[u8; 2]; 3]; 4] = [
+    // CENTRAL_SPLIT
+    [[TWIN_U8, TWIN_U8], [TWIN_U8, TWIN_U8], [NEXT_U8, PREV_U8]],
+    // RIGHT_DOUBLE_SPLIT
+    [[NEXT_U8, PREV_U8], [TWIN_U8, TWIN_U8], [NEXT_U8, TWIN_U8]],
+    // LEFT_DOUBLE_SPLIT
+    [[TWIN_U8, TWIN_U8], [NEXT_U8, PREV_U8], [TWIN_U8, NEXT_U8]],
+    // TRIPLE_SPLIT
+    [[NEXT_U8, PREV_U8], [NEXT_U8, PREV_U8], [TWIN_U8, TWIN_U8]],
+];
+pub fn get_child_edge_types(command: u32, parent_edge_type: usize) -> [u8; 2] {
+    return CHILD_EDGE_TYPE_LUT[(command / 2) as usize][parent_edge_type as usize];
+}
+
+struct SplitEdge {
+    slot: u32,           // allocation slot
+    edge_type: u8,       // whether it is NEXT, PREV, or TWIN
+    neighbor_index: u32, // index of neighbor allocation slot
+}
+
+// convention: when looking at the bisector from the outside,
+// with the newest vertex (of the child) on top, splitedge x is left of splitedge y
+struct EdgeData {
+    x: SplitEdge,
+    y: SplitEdge,
+}
+pub fn update_pointers(
+    curr_index: u32,
+    bisector_data: Vec<Bisector>,
+    neighbor_buffer: &mut Vec<[u32; 3]>,
+) {
+    let curr_bisector = &bisector_data[curr_index as usize];
+    let curr_command = curr_bisector.command.load(Ordering::Relaxed);
+    debug_assert!(curr_command != NO_SPLIT);
+    let neighbors = neighbor_buffer[curr_index as usize];
+    for (bisector_edge_idx, neighbor_index) in neighbors.into_iter().enumerate() {
+        if neighbor_index == u32::MAX {
+            continue;
+        }
+        let neighbor = &bisector_data[neighbor_index as usize];
+        let neighbor_command = neighbor.command.load(Ordering::Relaxed);
+
+        if neighbor_command == NO_SPLIT {
+            todo!()
+        }
+
+        let neighbor_neighbors = neighbor_buffer[neighbor_index as usize];
+
+        let neighbor_edge = if neighbor_neighbors[NEXT] == curr_index {
+            NEXT
+        } else if neighbor_neighbors[PREV] == curr_index {
+            PREV
+        } else {
+            debug_assert!(neighbor_neighbors[TWIN] == curr_index);
+            TWIN
+        };
+        let bisector_slots = get_edge_slots(curr_command, bisector_edge_idx);
+        let neighbor_slots = get_edge_slots(neighbor_command, neighbor_edge);
+        let edge_types = get_child_edge_types(curr_command, bisector_edge_idx);
+        let curr_edge_data = EdgeData {
+            // neighbor slots are reversed curr X must map to neighbor Y and vice versa
+            //        / \
+            //       / | \
+            //      / Y|X \
+            //     +---|---+
+            //      \ X|Y /
+            //       \ | /
+            //        \ /
+            x: SplitEdge {
+                slot: curr_bisector.allocation_slots[bisector_slots[0] as usize],
+                edge_type: edge_types[0],
+                neighbor_index: neighbor.allocation_slots[neighbor_slots[1] as usize],
+            },
+            y: SplitEdge {
+                slot: curr_bisector.allocation_slots[bisector_slots[1] as usize],
+                edge_type: edge_types[1],
+                neighbor_index: neighbor.allocation_slots[neighbor_slots[0] as usize],
+            },
+        };
+
+        // update neighbor buffer
+        neighbor_buffer[curr_edge_data.x.slot as usize][curr_edge_data.x.edge_type as usize] =
+            curr_edge_data.x.neighbor_index;
+        neighbor_buffer[curr_edge_data.y.slot as usize][curr_edge_data.y.edge_type as usize] =
+            curr_edge_data.y.neighbor_index;
+    }
+
+    // update pointers from bisector children to other bisector children
+    if curr_command == CENTER_SPLIT {
+        neighbor_buffer[curr_bisector.allocation_slots[1] as usize][NEXT] =
+            curr_bisector.allocation_slots[0];
+        neighbor_buffer[curr_bisector.allocation_slots[0] as usize][PREV] =
+            curr_bisector.allocation_slots[1];
+    } else if curr_command == RIGHT_DOUBLE_SPLIT {
+    } else if curr_command == LEFT_DOUBLE_SPLIT {
+    } else {
+        debug_assert!(curr_command == TRIPLE_SPLIT);
     }
 }
