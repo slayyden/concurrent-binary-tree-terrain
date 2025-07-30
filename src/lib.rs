@@ -92,24 +92,27 @@ impl AllocatedBuffer {
 pub struct CBT {
     depth: u64, // number of edges from the root to a furthest leaf
     interior: Vec<u32>,
-    leaves: Vec<u64>,
+    leaves: Vec<AtomicU32>,
 }
 
+const BITFIELD_INT_SIZE: u32 = 32;
 impl CBT {
     pub fn new(depth: u64) -> CBT {
         let bitfield_length = (1 << depth) as u64;
-        let num_leaves = bitfield_length / 64;
+        let num_leaves = bitfield_length / (BITFIELD_INT_SIZE as u64);
         let num_internal = 2 * num_leaves - 1;
 
-        let leaves = vec![0 as u64; num_leaves as usize];
         let interior = vec![0 as u32; num_internal as usize];
+
+        let mut leaves = Vec::<AtomicU32>::new();
+        leaves.resize_with(num_leaves as usize, || AtomicU32::new(0));
 
         return CBT {
             depth: depth,
             interior: interior,
             // occupancy bitfield in little endian bit order
-            // ie. between u64: smaller idx -> larger idx
-            //     within  u64:         lsb -> msb
+            // ie. between u32: smaller idx -> larger idx
+            //     within  u32:         lsb -> msb
             // WARNING: this is the OPPOSITE directionality as expected from bit shifting operations
             leaves: leaves,
         };
@@ -119,14 +122,14 @@ impl CBT {
         let interior_offset = self.interior.len() / 2;
 
         for i in 0..(interior_offset + 1) {
-            let num_ones = self.leaves[i].count_ones();
+            let num_ones = self.leaves[i].load(Ordering::Relaxed).count_ones();
             self.interior[interior_offset + i] = num_ones;
         }
 
         // index_of_last_level = depth
-        // 64 (depth) -> 32 (depth - 1) -> 16 (depth - 2) -> 8 (depth - 3) -> 4 (depth - 4) -> 2 (depth - 5) -> 1 (depth - 6)
+        // 32 (depth) -> 16 (depth - 1) -> 8 (depth - 2) -> 4 (depth - 3) -> 2 (depth - 4) -> 1 (depth - 5)
         // all these levels have been filled
-        let deepest_filled_level = self.depth - 6;
+        let deepest_filled_level = self.depth - 5;
 
         for level in (0..deepest_filled_level).rev() {
             let level_start = (1 << level) - 1;
@@ -141,7 +144,7 @@ impl CBT {
         &self,
         index: u32, // index of the bit in the bitfield
     ) -> u32 {
-        let cap = (self.leaves.len() * 64) as u32;
+        let cap = self.leaves.len() as u32 * BITFIELD_INT_SIZE;
         if index >= cap - self.interior[0] {
             return u32::MAX;
         }
@@ -171,10 +174,10 @@ impl CBT {
             }
         };
 
-        let leaf_idx = base_idx * 64;
+        let leaf_idx = base_idx * BITFIELD_INT_SIZE;
         // get the index of the bit in the leaf
         let bit_idx = {
-            let leaf = self.leaves[base_idx as usize];
+            let leaf = self.leaves[base_idx as usize].load(Ordering::Relaxed);
             let mut bit_idx = leaf.trailing_ones();
             for _ in 0..zero_count {
                 let leaf = leaf >> bit_idx + 1; // add 1 to skip over the next bit
@@ -230,10 +233,10 @@ impl CBT {
         // itr lci idx ii
         //   0   1   4  2
 
-        let leaf_idx = base_idx * 64;
+        let leaf_idx = base_idx * BITFIELD_INT_SIZE;
         // get the index of the bit in the leaf
         let bit_idx = {
-            let leaf = self.leaves[base_idx as usize];
+            let leaf = self.leaves[base_idx as usize].load(Ordering::Relaxed);
             let mut bit_idx = leaf.trailing_zeros();
             for _ in 0..one_count {
                 let leaf = leaf >> bit_idx + 1; // add 1 to skip over the next bit
@@ -246,19 +249,19 @@ impl CBT {
     }
 
     pub fn set_bit(&mut self, index: u32) {
-        let leaf_idx = index / 64;
-        let bit_idx = index % 64;
+        let leaf_idx = index / BITFIELD_INT_SIZE;
+        let bit_idx = index % BITFIELD_INT_SIZE;
 
-        let bit = (1 << bit_idx) as u64;
-        self.leaves[leaf_idx as usize] |= bit;
+        let bit = (1 << bit_idx) as u32;
+        self.leaves[leaf_idx as usize].fetch_or(bit, Ordering::Relaxed);
     }
 
     pub fn unset_bit(&mut self, index: u32) {
-        let leaf_idx = index / 64;
-        let bit_idx = index % 64;
+        let leaf_idx = index / BITFIELD_INT_SIZE;
+        let bit_idx = index % BITFIELD_INT_SIZE;
 
-        let bit = (1 << bit_idx) as u64;
-        self.leaves[leaf_idx as usize] &= !bit;
+        let bit = (1 << bit_idx) as u32;
+        self.leaves[leaf_idx as usize].fetch_and(!bit, Ordering::Relaxed);
     }
 }
 
@@ -268,70 +271,69 @@ mod tests {
 
     #[test]
     fn reduce1() {
-        let mut cbt = CBT::new(8);
+        let mut cbt = CBT::new(7);
 
         // 0010
         // 0004      0006
         // 0001 0003 0002 0004
         // 0010 0111 1001 1111
 
-        cbt.leaves[0] = 0b0010;
-        cbt.leaves[1] = 0b0111;
-        cbt.leaves[2] = 0b1001;
-        cbt.leaves[3] = 0b1111;
+        cbt.leaves[0] = AtomicU32::new(0b0010);
+        cbt.leaves[1] = AtomicU32::new(0b0111);
+        cbt.leaves[2] = AtomicU32::new(0b1001);
+        cbt.leaves[3] = AtomicU32::new(0b1111);
 
         println!("leaves: {:?}", cbt.leaves);
 
         cbt.reduce();
         assert_eq!(cbt.interior, vec![10, 4, 6, 1, 3, 2, 4]);
 
-        assert_eq!(cbt.one_bit_to_id(0), 64 * 0 + 1);
-        assert_eq!(cbt.one_bit_to_id(1), 64 * 1 + 0);
-        assert_eq!(cbt.one_bit_to_id(2), 64 * 1 + 1);
-        assert_eq!(cbt.one_bit_to_id(3), 64 * 1 + 2);
-        assert_eq!(cbt.one_bit_to_id(4), 64 * 2 + 0);
-        assert_eq!(cbt.one_bit_to_id(5), 64 * 2 + 3);
-        assert_eq!(cbt.one_bit_to_id(6), 64 * 3 + 0);
-        assert_eq!(cbt.one_bit_to_id(7), 64 * 3 + 1);
-        assert_eq!(cbt.one_bit_to_id(8), 64 * 3 + 2);
-        assert_eq!(cbt.one_bit_to_id(9), 64 * 3 + 3);
+        assert_eq!(cbt.one_bit_to_id(0), 32 * 0 + 1);
+        assert_eq!(cbt.one_bit_to_id(1), 32 * 1 + 0);
+        assert_eq!(cbt.one_bit_to_id(2), 32 * 1 + 1);
+        assert_eq!(cbt.one_bit_to_id(3), 32 * 1 + 2);
+        assert_eq!(cbt.one_bit_to_id(4), 32 * 2 + 0);
+        assert_eq!(cbt.one_bit_to_id(5), 32 * 2 + 3);
+        assert_eq!(cbt.one_bit_to_id(6), 32 * 3 + 0);
+        assert_eq!(cbt.one_bit_to_id(7), 32 * 3 + 1);
+        assert_eq!(cbt.one_bit_to_id(8), 32 * 3 + 2);
+        assert_eq!(cbt.one_bit_to_id(9), 32 * 3 + 3);
         assert_eq!(cbt.one_bit_to_id(10), u32::MAX);
 
-        cbt.leaves = cbt
-            .leaves
-            .iter_mut()
-            .map(|x| *x | 0xFFFF_FFFF_FFFF_FFF0)
-            .collect();
+        for leaf in cbt.leaves.iter_mut() {
+            leaf.fetch_or(0xFFFF_FFF0, Ordering::Relaxed);
+        }
+
         cbt.reduce();
 
-        assert_eq!(cbt.zero_bit_to_id(0), 64 * 0 + 0);
-        assert_eq!(cbt.zero_bit_to_id(1), 64 * 0 + 2);
-        assert_eq!(cbt.zero_bit_to_id(2), 64 * 0 + 3);
+        assert_eq!(cbt.zero_bit_to_id(0), 32 * 0 + 0);
+        assert_eq!(cbt.zero_bit_to_id(1), 32 * 0 + 2);
+        assert_eq!(cbt.zero_bit_to_id(2), 32 * 0 + 3);
 
-        assert_eq!(cbt.zero_bit_to_id(3), 64 * 1 + 3);
+        assert_eq!(cbt.zero_bit_to_id(3), 32 * 1 + 3);
 
-        assert_eq!(cbt.zero_bit_to_id(4), 64 * 2 + 1);
-        assert_eq!(cbt.zero_bit_to_id(5), 64 * 2 + 2);
+        assert_eq!(cbt.zero_bit_to_id(4), 32 * 2 + 1);
+        assert_eq!(cbt.zero_bit_to_id(5), 32 * 2 + 2);
         assert_eq!(cbt.zero_bit_to_id(6), u32::MAX);
     }
 
     #[test]
     fn reduce2() {
-        let mut cbt = CBT::new(9);
+        let mut cbt = CBT::new(8);
 
         // 12
         // 8                   4
         // 4         4         1         3
         // 3    1    2    2    0    1    2    1
         // 1011 0001 0101 1010 0000 0100 0110 0001
-        cbt.leaves[0] = 0b1011;
-        cbt.leaves[1] = 0b0001;
-        cbt.leaves[2] = 0b0101;
-        cbt.leaves[3] = 0b1010;
-        cbt.leaves[4] = 0b0000;
-        cbt.leaves[5] = 0b0100;
-        cbt.leaves[6] = 0b0110;
-        cbt.leaves[7] = 0b0001;
+        cbt.leaves[0] = AtomicU32::new(0b1011);
+        cbt.leaves[1] = AtomicU32::new(0b0001);
+        cbt.leaves[2] = AtomicU32::new(0b0101);
+        cbt.leaves[3] = AtomicU32::new(0b1010);
+        cbt.leaves[4] = AtomicU32::new(0b0000);
+        cbt.leaves[5] = AtomicU32::new(0b0100);
+        cbt.leaves[6] = AtomicU32::new(0b0110);
+        cbt.leaves[7] = AtomicU32::new(0b0001);
 
         println!("leaves: {:?}", cbt.leaves);
 
@@ -342,63 +344,60 @@ mod tests {
         );
 
         // 1011
-        assert_eq!(cbt.one_bit_to_id(0), 64 * 0 + 0);
-        assert_eq!(cbt.one_bit_to_id(1), 64 * 0 + 1);
-        assert_eq!(cbt.one_bit_to_id(2), 64 * 0 + 3);
+        assert_eq!(cbt.one_bit_to_id(0), 32 * 0 + 0);
+        assert_eq!(cbt.one_bit_to_id(1), 32 * 0 + 1);
+        assert_eq!(cbt.one_bit_to_id(2), 32 * 0 + 3);
         // 0001
-        assert_eq!(cbt.one_bit_to_id(3), 64 * 1 + 0);
+        assert_eq!(cbt.one_bit_to_id(3), 32 * 1 + 0);
         // 0101
-        assert_eq!(cbt.one_bit_to_id(4), 64 * 2 + 0);
-        assert_eq!(cbt.one_bit_to_id(5), 64 * 2 + 2);
+        assert_eq!(cbt.one_bit_to_id(4), 32 * 2 + 0);
+        assert_eq!(cbt.one_bit_to_id(5), 32 * 2 + 2);
         // 1010
-        assert_eq!(cbt.one_bit_to_id(6), 64 * 3 + 1);
-        assert_eq!(cbt.one_bit_to_id(7), 64 * 3 + 3);
+        assert_eq!(cbt.one_bit_to_id(6), 32 * 3 + 1);
+        assert_eq!(cbt.one_bit_to_id(7), 32 * 3 + 3);
         // 0000
         // 0100
-        assert_eq!(cbt.one_bit_to_id(8), 64 * 5 + 2);
+        assert_eq!(cbt.one_bit_to_id(8), 32 * 5 + 2);
         // 0110
-        assert_eq!(cbt.one_bit_to_id(9), 64 * 6 + 1);
-        assert_eq!(cbt.one_bit_to_id(10), 64 * 6 + 2);
+        assert_eq!(cbt.one_bit_to_id(9), 32 * 6 + 1);
+        assert_eq!(cbt.one_bit_to_id(10), 32 * 6 + 2);
         // 0001
-        assert_eq!(cbt.one_bit_to_id(11), 64 * 7 + 0);
+        assert_eq!(cbt.one_bit_to_id(11), 32 * 7 + 0);
         // end
         assert_eq!(cbt.one_bit_to_id(12), u32::MAX);
 
-        cbt.leaves = cbt
-            .leaves
-            .iter_mut()
-            .map(|x| *x | 0xFFFF_FFFF_FFFF_FFF0)
-            .collect();
-
+        for leaf in cbt.leaves.iter_mut() {
+            leaf.fetch_or(0xFFFF_FFF0, Ordering::Relaxed);
+        }
         cbt.reduce();
         // 1011
-        assert_eq!(cbt.zero_bit_to_id(0), 64 * 0 + 2);
+        assert_eq!(cbt.zero_bit_to_id(0), 32 * 0 + 2);
         // 0001
-        assert_eq!(cbt.zero_bit_to_id(1), 64 * 1 + 1);
-        assert_eq!(cbt.zero_bit_to_id(2), 64 * 1 + 2);
-        assert_eq!(cbt.zero_bit_to_id(3), 64 * 1 + 3);
+        assert_eq!(cbt.zero_bit_to_id(1), 32 * 1 + 1);
+        assert_eq!(cbt.zero_bit_to_id(2), 32 * 1 + 2);
+        assert_eq!(cbt.zero_bit_to_id(3), 32 * 1 + 3);
         // 0101
-        assert_eq!(cbt.zero_bit_to_id(4), 64 * 2 + 1);
-        assert_eq!(cbt.zero_bit_to_id(5), 64 * 2 + 3);
+        assert_eq!(cbt.zero_bit_to_id(4), 32 * 2 + 1);
+        assert_eq!(cbt.zero_bit_to_id(5), 32 * 2 + 3);
         // 1010
-        assert_eq!(cbt.zero_bit_to_id(6), 64 * 3 + 0);
-        assert_eq!(cbt.zero_bit_to_id(7), 64 * 3 + 2);
+        assert_eq!(cbt.zero_bit_to_id(6), 32 * 3 + 0);
+        assert_eq!(cbt.zero_bit_to_id(7), 32 * 3 + 2);
         // 0000
-        assert_eq!(cbt.zero_bit_to_id(8), 64 * 4 + 0);
-        assert_eq!(cbt.zero_bit_to_id(9), 64 * 4 + 1);
-        assert_eq!(cbt.zero_bit_to_id(10), 64 * 4 + 2);
-        assert_eq!(cbt.zero_bit_to_id(11), 64 * 4 + 3);
+        assert_eq!(cbt.zero_bit_to_id(8), 32 * 4 + 0);
+        assert_eq!(cbt.zero_bit_to_id(9), 32 * 4 + 1);
+        assert_eq!(cbt.zero_bit_to_id(10), 32 * 4 + 2);
+        assert_eq!(cbt.zero_bit_to_id(11), 32 * 4 + 3);
         // 0100
-        assert_eq!(cbt.zero_bit_to_id(12), 64 * 5 + 0);
-        assert_eq!(cbt.zero_bit_to_id(13), 64 * 5 + 1);
-        assert_eq!(cbt.zero_bit_to_id(14), 64 * 5 + 3);
+        assert_eq!(cbt.zero_bit_to_id(12), 32 * 5 + 0);
+        assert_eq!(cbt.zero_bit_to_id(13), 32 * 5 + 1);
+        assert_eq!(cbt.zero_bit_to_id(14), 32 * 5 + 3);
         // 0110
-        assert_eq!(cbt.zero_bit_to_id(15), 64 * 6 + 0);
-        assert_eq!(cbt.zero_bit_to_id(16), 64 * 6 + 3);
+        assert_eq!(cbt.zero_bit_to_id(15), 32 * 6 + 0);
+        assert_eq!(cbt.zero_bit_to_id(16), 32 * 6 + 3);
         // 0001
-        assert_eq!(cbt.zero_bit_to_id(17), 64 * 7 + 1);
-        assert_eq!(cbt.zero_bit_to_id(18), 64 * 7 + 2);
-        assert_eq!(cbt.zero_bit_to_id(19), 64 * 7 + 3);
+        assert_eq!(cbt.zero_bit_to_id(17), 32 * 7 + 1);
+        assert_eq!(cbt.zero_bit_to_id(18), 32 * 7 + 2);
+        assert_eq!(cbt.zero_bit_to_id(19), 32 * 7 + 3);
         // end
         assert_eq!(cbt.zero_bit_to_id(20), u32::MAX);
     }
@@ -421,7 +420,7 @@ const UNCHANGED_ELEMENT: u32 = 0;
 
 // use pure AoS for now
 pub struct Bisector {
-    heapid: u32,
+    // heapid: u32,
     state: u32,
     command: AtomicU32,
     allocation_slots: [u32; 4],
@@ -667,6 +666,28 @@ impl HalfedgeMesh {
     }
 }
 
+pub fn allocate(
+    curr_id: u32,
+    bisector_data: &mut [Bisector],
+    memory_counter: AtomicU32,
+    cbt: &mut CBT,
+) {
+    let command = bisector_data[curr_id as usize]
+        .command
+        .load(Ordering::Relaxed);
+
+    let num_splits = command.count_ones();
+    let first_bit_index = memory_counter.fetch_add(num_splits, Ordering::Relaxed);
+
+    let mut allocation_indices: [u32; 4] = [curr_id, u32::MAX, u32::MAX, u32::MAX];
+
+    for (i, bit_index) in (first_bit_index..(first_bit_index + num_splits)).enumerate() {
+        let child_id = cbt.zero_bit_to_id(bit_index);
+        cbt.set_bit(child_id);
+        allocation_indices[i] = bit_index;
+    }
+}
+
 const COMMAND_EDGE_LUT: [[[u8;
         2 /* number of slots going to an edge */];
         3 /* number of edges */];
@@ -712,6 +733,10 @@ const CHILD_EDGE_TYPE_LUT: [[[u8; 2]; 3]; 4] = [
     // TRIPLE_SPLIT
     [[NEXT_U8, PREV_U8], [NEXT_U8, PREV_U8], [TWIN_U8, TWIN_U8]],
 ];
+// given a split command of the parent and an edge type (NEXT, PREV, or TWIN)
+// return the types of edges of the children corresponding to an edge
+// eg. the twin edge of a parent undergoing a central split
+// becomes the next edge of one child and the prev edge of another
 pub fn get_child_edge_types(command: u32, parent_edge_type: usize) -> [u8; 2] {
     return CHILD_EDGE_TYPE_LUT[(command / 2) as usize][parent_edge_type as usize];
 }
@@ -737,18 +762,33 @@ pub fn allocate_children(
     // write new heapids
 }
 
+fn find_edge_type(curr_id: u32, neighbor_neighbors: [u32; 3]) -> usize {
+    if neighbor_neighbors[NEXT] == curr_id {
+        NEXT
+    } else if neighbor_neighbors[PREV] == curr_id {
+        PREV
+    } else {
+        debug_assert!(neighbor_neighbors[TWIN] == curr_id);
+        TWIN
+    }
+}
+
 // convention: when looking at the bisector from the outside,
 // with the newest vertex (of the child) on top, splitedge x is left of splitedge y
 struct EdgeData {
     x: SplitEdge,
     y: SplitEdge,
 }
+
+// TODO: Allocate memory
 pub fn update_pointers(
     curr_index: u32,
     bisector_data: &[Bisector],
     neighbor_buffer: &mut [[u32; 3]],
+    heap_id_buffer: &mut [u32],
 ) {
     let curr_bisector = &bisector_data[curr_index as usize];
+    let curr_heapid = heap_id_buffer[curr_index as usize];
     let curr_command = curr_bisector.command.load(Ordering::Relaxed);
     debug_assert!(curr_command != NO_SPLIT);
     let neighbors = neighbor_buffer[curr_index as usize];
@@ -762,17 +802,7 @@ pub fn update_pointers(
         let neighbor = &bisector_data[neighbor_index as usize];
         let neighbor_command = neighbor.command.load(Ordering::Relaxed);
 
-        let neighbor_edge = {
-            let neighbor_neighbors = neighbor_buffer[neighbor_index as usize];
-            if neighbor_neighbors[NEXT] == curr_index {
-                NEXT
-            } else if neighbor_neighbors[PREV] == curr_index {
-                PREV
-            } else {
-                debug_assert!(neighbor_neighbors[TWIN] == curr_index);
-                TWIN
-            }
-        };
+        let neighbor_edge = find_edge_type(curr_index, neighbor_buffer[neighbor_index as usize]);
         let bisector_slots = get_edge_slots(curr_command, bisector_edge_idx);
         let neighbor_slots = get_edge_slots(neighbor_command, neighbor_edge);
         let edge_types = get_child_edge_types(curr_command, bisector_edge_idx);
@@ -800,13 +830,19 @@ pub fn update_pointers(
     }
 
     // update pointers from bisector children to other bisector children
+    // also writes new heapids
     // best to draw a picture for this
+    // TODO: reduce branched global stores
     if curr_command == CENTER_SPLIT {
         link_siblings(
             curr_bisector.allocation_slots[1],
             curr_bisector.allocation_slots[0],
             neighbor_buffer,
         );
+
+        // heapids start at 1
+        heap_id_buffer[curr_bisector.allocation_slots[0] as usize] = 2 * curr_heapid;
+        heap_id_buffer[curr_bisector.allocation_slots[1] as usize] = 2 * curr_heapid + 1;
     } else if curr_command == RIGHT_DOUBLE_SPLIT {
         link_siblings(
             curr_bisector.allocation_slots[0],
@@ -817,6 +853,11 @@ pub fn update_pointers(
             curr_bisector.allocation_slots[1];
         neighbor_buffer[curr_bisector.allocation_slots[1] as usize][PREV] =
             curr_bisector.allocation_slots[0];
+
+        // heapids start at 1
+        heap_id_buffer[curr_bisector.allocation_slots[0] as usize] = 4 * curr_heapid;
+        heap_id_buffer[curr_bisector.allocation_slots[1] as usize] = 2 * curr_heapid + 1;
+        heap_id_buffer[curr_bisector.allocation_slots[2] as usize] = 4 * curr_heapid + 1;
     } else if curr_command == LEFT_DOUBLE_SPLIT {
         link_siblings(
             curr_bisector.allocation_slots[2],
@@ -827,6 +868,11 @@ pub fn update_pointers(
             curr_bisector.allocation_slots[0];
         neighbor_buffer[curr_bisector.allocation_slots[0] as usize][NEXT] =
             curr_bisector.allocation_slots[2];
+
+        // heapids start at 1
+        heap_id_buffer[curr_bisector.allocation_slots[0] as usize] = 2 * curr_heapid;
+        heap_id_buffer[curr_bisector.allocation_slots[1] as usize] = 4 * curr_heapid + 2;
+        heap_id_buffer[curr_bisector.allocation_slots[2] as usize] = 4 * curr_heapid + 3;
     } else {
         debug_assert!(curr_command == TRIPLE_SPLIT);
         link_siblings(
@@ -843,16 +889,132 @@ pub fn update_pointers(
             curr_bisector.allocation_slots[0];
         neighbor_buffer[curr_bisector.allocation_slots[0] as usize][TWIN] =
             curr_bisector.allocation_slots[3];
+
+        heap_id_buffer[curr_bisector.allocation_slots[0] as usize] = 4 * curr_heapid;
+        heap_id_buffer[curr_bisector.allocation_slots[1] as usize] = 4 * curr_heapid + 2;
+        heap_id_buffer[curr_bisector.allocation_slots[2] as usize] = 4 * curr_heapid + 1;
+        heap_id_buffer[curr_bisector.allocation_slots[3] as usize] = 4 * curr_heapid + 3;
+    }
+}
+
+const SIMPLIFY: u32 = 1;
+
+// shamelessly copied from the original
+pub fn prepare_merge(
+    curr_id: u32,
+    neighbor_buffer: &mut [[u32; 3]],
+    bisector_data: &mut [Bisector],
+    heap_id_buffer: &mut [u32],
+    simplification_counter: AtomicU32,
+    simplification_buffer: &mut [u32],
+) {
+    // Get the bisector and heapid
+    let curr_heapid = heap_id_buffer[curr_id as usize]; // (garaunteed to be even)
+    let curr_neighbors = neighbor_buffer[curr_id as usize];
+    let curr_depth = heap_id_depth(curr_heapid);
+
+    // Grab the pair neighbor (it has to exist)
+    let next_id = curr_neighbors[NEXT];
+    let next_heapid = heap_id_buffer[next_id as usize];
+    let next_bisector = &bisector_data[next_id as usize];
+    let next_neighbors = neighbor_buffer[next_id as usize];
+    let next_depth = heap_id_depth(next_heapid);
+
+    // If they are not at the same depth or the pair is not to be simplified, we're done
+    if next_depth != curr_depth || next_bisector.state != SIMPLIFY {
+        return;
     }
 
-    // Grab the two bisectors
-    twinLowBisectData = _BisectorDataBuffer[twinLowID];
-    BisectorData twinHighBisectData = _BisectorDataBuffer[twinHighID];
+    // remove reference to next
+    if next_neighbors[TWIN] != u32::MAX {
+        let next_twin_neighbors = neighbor_buffer[next_neighbors[TWIN] as usize];
+        let edge_type = find_edge_type(next_id, next_twin_neighbors);
+        neighbor_buffer[next_neighbors[TWIN] as usize][edge_type] = curr_id;
+    }
 
-    // This element should not be doing the simplifications if:
-    // - One of the four elements doesn't have the same depth
-    // - One of the four elements isn't flagged for simplification
-    if (twinLowBisectData.bisectorState != SIMPLIFY_ELEMENT
-        || twinHighBisectData.bisectorState != SIMPLIFY_ELEMENT)
-        return;
+    let mut num_pairs_to_merge = 1 as u32;
+    // We need to identify our twin pair
+    let twin_lowid = next_neighbors[NEXT];
+    let twin_highid = curr_neighbors[PREV];
+    if twin_lowid != u32::MAX {
+        // Grab the two bisectors
+        let twin_low_heapid = heap_id_buffer[twin_lowid as usize];
+        let twin_high_heapid = heap_id_buffer[twin_highid as usize];
+
+        // The current bisector is not the smallest element of the neighborhood, he will be handeled by twinLowBisect if needed
+        if curr_heapid > twin_low_heapid {
+            return;
+        }
+
+        // Compute the depth of both neighbors
+        let twin_low_depth = heap_id_depth(twin_low_heapid);
+        let twin_high_depth = heap_id_depth(twin_high_heapid);
+
+        // If all four elements are not on the same
+        if twin_low_depth != curr_depth || twin_high_depth != curr_depth {
+            return;
+        }
+
+        // Grab the two bisectors
+        let twin_low_bisector = &bisector_data[twin_lowid as usize];
+        let twin_high_bisector = &bisector_data[twin_highid as usize];
+
+        // This element should not be doing the simplifications if:
+        // - One of the four elements doesn't have the same depth
+        // - One of the four elements isn't flagged for simplification
+        if twin_low_bisector.state != SIMPLIFY || twin_high_bisector.state != SIMPLIFY {
+            return;
+        }
+
+        // remove reference to twin_high
+        let twin_high_neighbors = neighbor_buffer[twin_highid as usize];
+        if twin_high_neighbors[TWIN] != u32::MAX {
+            let twin_high_twin_neighbors = neighbor_buffer[twin_high_neighbors[TWIN] as usize];
+            let edge_type = find_edge_type(twin_highid, twin_high_twin_neighbors);
+            neighbor_buffer[twin_high_neighbors[TWIN] as usize][edge_type] = twin_lowid;
+        }
+        num_pairs_to_merge = 2;
+    }
+
+    // enqueue 1 thread for each pair we need to merge
+    let base_slot = simplification_counter.fetch_add(num_pairs_to_merge, Ordering::Relaxed);
+    simplification_buffer[base_slot as usize] = curr_id;
+    if num_pairs_to_merge == 2 {
+        simplification_buffer[(base_slot + 1) as usize] = twin_lowid;
+    }
+}
+
+pub fn merge(
+    curr_id: u32,
+    neighbor_buffer: &mut [[u32; 3]],
+    bisector_data: &mut [Bisector],
+    heap_id_buffer: &mut [u32],
+    simplification_counter: AtomicU32,
+    simplification_buffer: &mut [u32],
+    cbt: &mut CBT,
+) {
+    let curr_heapid = heap_id_buffer[curr_id as usize]; // (garaunteed to be even)
+    let curr_neighbors = neighbor_buffer[curr_id as usize];
+
+    let next_id = curr_neighbors[NEXT];
+    let next_neighbors = neighbor_buffer[next_id as usize];
+
+    let new_neighbors = [
+        // NEXT
+        curr_neighbors[TWIN],
+        // PREV
+        next_neighbors[TWIN],
+        // TWIN
+        curr_neighbors[PREV],
+    ];
+
+    neighbor_buffer[curr_id as usize] = new_neighbors;
+    heap_id_buffer[curr_id as usize] = curr_heapid >> 1;
+    heap_id_buffer[next_id as usize] = 0;
+
+    cbt.unset_bit(next_id);
+}
+
+struct PipelineData {
+    cbt: CBT,
 }

@@ -20,6 +20,11 @@
  - [ ] create more interesting vertex buffer
  - [x] create CBT implementation on CPU
  - [x] test CBT implementation on CPU
+ - [ ] put together pipeline
+ - [ ] test pipeline
+ - [ ] visualize pipeline
+ - [ ] write classification function
+ - [ ] port to GPU
 
 # Design
 ## Vulkan Features
@@ -133,3 +138,53 @@ CBT MEMORY POOL:
 
 # Day 27
 Warp scans are SLOW compared to multi warp scans, but can have lower latency.
+
+# Day 29
+OKAY
+
+Step 1: Each bisector is classified.
+- includes backface, frustum, and size based "culling"
+- reset some buffers
+- split and merge (only even) bisector memoryblock indices are atomically appended to "dynamic" arrays with length S and M
+- record remaining # of slots as R
+Step 2: Splitting
+- dispatch S threads, one for each splitting bisector
+- split commands are written to bisectors, ensuring not to exceed R
+- atomically append memblk indices to allocation array A (one for each allocation)
+Step 3: Allocation
+- dispatch len(A) threads
+- each thread looks up its subdivision pattern and binary searches for up to 3 free memory blocks and marks them as occupied
+- the indices of these memory blocks are written to the bisector
+Step 4: Splitting Pointer updates
+- dispatch len(A) threads, one for each split bisector
+- update all neighbor pointers of the children
+- update neighbor pointers of the parent's unsplit neighbors
+- write new heapids
+Step 5: Enqueue merges
+- dispatch M threads
+- thread reads bisector data
+- split command => return early
+- write merge commands in bisector data
+- 2 kinds of merge command
+  - lower heapid: merge with next
+  - higher heapid: merge with prev
+- write lower pairs to buffer M'
+Step 6: Merging
+- dispatch len(M') threads
+
+- pointer updates:
+if upper->twin->command is "merge with prev"
+  merged->prev = upper->twin->prev->id
+else
+  merged->prev = upper->twin->id
+// symmetric case for lower->twin
+merged->twin = upper->next
+
+- update heapid
+- free upper
+
+Step 8: CBT update
+- store number of bisectors in B
+Step 9: Write and displace vertex buffer
+- dispatch B threads
+Step 10: Render (vertex and fragment shaders)
