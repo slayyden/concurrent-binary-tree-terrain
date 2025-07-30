@@ -844,4 +844,15 @@ pub fn update_pointers(
         neighbor_buffer[curr_bisector.allocation_slots[0] as usize][TWIN] =
             curr_bisector.allocation_slots[3];
     }
+
+    // Grab the two bisectors
+    twinLowBisectData = _BisectorDataBuffer[twinLowID];
+    BisectorData twinHighBisectData = _BisectorDataBuffer[twinHighID];
+
+    // This element should not be doing the simplifications if:
+    // - One of the four elements doesn't have the same depth
+    // - One of the four elements isn't flagged for simplification
+    if (twinLowBisectData.bisectorState != SIMPLIFY_ELEMENT
+        || twinHighBisectData.bisectorState != SIMPLIFY_ELEMENT)
+        return;
 }
