@@ -7,11 +7,11 @@ use ash::{
     vk,
 };
 use dirt_jam::*;
-use std::{cmp::max, error::Error, io::Cursor, os::raw::c_char, ptr::copy_nonoverlapping, u64};
+use std::{cmp::max, error::Error, io::Cursor, os::raw::c_char, u64};
 use winit::{
     application::ApplicationHandler,
     event::WindowEvent,
-    event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
+    event_loop::{ActiveEventLoop, EventLoop},
     raw_window_handle::{HasDisplayHandle, HasWindowHandle},
     window::{Window, WindowId},
 };
