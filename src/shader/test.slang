@@ -1,7 +1,7 @@
 struct PushConstant
 {
     float4x4 view_project;
-    float *positions;
+    float3 *positions;
 }
 
 [[vk::push_constant]]
@@ -24,11 +24,8 @@ v2p vertexMain(uint vid: SV_VertexID)
     );
     v2p output;
     output.color = colors[vid % 3];
-    output.sv_position = float4(
-        pushConst.positions[vid * 3],
-        pushConst.positions[vid * 3 + 1],
-        pushConst.positions[vid * 3 + 2],
-        1.0);
+    float4 pos = float4(pushConst.positions[vid], 1);
+    output.sv_position = pos;
 
     return output;
 }

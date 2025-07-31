@@ -7,7 +7,7 @@ use ash::{
     vk,
 };
 use dirt_jam::*;
-use glam::Vec3;
+use glam::{Vec3, Vec3A};
 use std::{cmp::max, error::Error, io::Cursor, os::raw::c_char, u64};
 use winit::{
     application::ApplicationHandler,
@@ -112,6 +112,8 @@ struct State {
     command_reuse_fences: [vk::Fence; 3],
 
     vertex_buffer: AllocatedBuffer,
+
+    algorithm_data: PipelineData,
 }
 
 impl State {
@@ -272,7 +274,7 @@ impl State {
                         .layer_count(1),
                 ],
             );
-            dev.cmd_draw(*cmdbuf, 3, 1, 0, 0);
+            dev.cmd_draw(*cmdbuf, 6 * 3, 1, 0, 0);
 
             dev.cmd_end_rendering(*cmdbuf);
 
@@ -465,6 +467,8 @@ impl ApplicationHandler for App {
             let queue_info = vk::DeviceQueueCreateInfo::default()
                 .queue_family_index(queue_family_index)
                 .queue_priorities(&priorities);
+            let mut vulkan_11_features =
+                vk::PhysicalDeviceVulkan11Features::default().shader_draw_parameters(true);
             let mut vulkan_12_features = vk::PhysicalDeviceVulkan12Features::default()
                 .buffer_device_address(true)
                 .timeline_semaphore(true);
@@ -473,6 +477,7 @@ impl ApplicationHandler for App {
             let device_create_info = vk::DeviceCreateInfo::default()
                 .queue_create_infos(std::slice::from_ref(&queue_info))
                 .enabled_extension_names(&device_extension_names_raw)
+                .push_next(&mut vulkan_11_features)
                 .push_next(&mut vulkan_12_features)
                 .push_next(&mut vulkan_13_features);
 
@@ -651,12 +656,46 @@ impl ApplicationHandler for App {
 
             // ----------------------------------------------------------------
             // create buffers
-            let vertex_positions = [
-                1., 0.0, 0.5, //v0
-                0., 1., 0.5, //v1
-                0., 0., 0.5, //v2
-            ] as [f32; 9];
-            let vertex_buffer_size = (size_of::<f32>() * vertex_positions.len()) as u64;
+
+            let halfedge_mesh = HalfedgeMesh {
+                verts: vec![
+                    Vec3::new(1.0, 0.0, 0.5),
+                    Vec3::new(0.0, 1.0, 0.5),
+                    Vec3::new(-1.0, 0.0, 0.5),
+                    Vec3::new(0.0, -1.0, 0.5),
+                ],
+                indices: vec![2, 0, 1, 0, 2, 3],
+                faces: vec![
+                    Face {
+                        v0: 0,
+                        num_verts: 3,
+                    },
+                    Face {
+                        v0: 3,
+                        num_verts: 3,
+                    },
+                ],
+                neighbors: vec![
+                    [1, 2, 3],
+                    [2, 0, u32::MAX],
+                    [0, 1, u32::MAX],
+                    [4, 5, 0],
+                    [5, 3, u32::MAX],
+                    [3, 4, u32::MAX],
+                ],
+            };
+            let algorithm_data = PipelineData::new(halfedge_mesh, 17);
+            debug_assert!(algorithm_data.cbt.leaves.len() == 4096);
+
+            println!("vertex_buffer[0]: {:?}", algorithm_data.vertex_buffer[0]);
+            println!("vertex_buffer[1]: {:?}", algorithm_data.vertex_buffer[1]);
+            println!("vertex_buffer[2]: {:?}", algorithm_data.vertex_buffer[2]);
+            println!("vertex_buffer[3]: {:?}", algorithm_data.vertex_buffer[3]);
+            println!("vertex_buffer[4]: {:?}", algorithm_data.vertex_buffer[4]);
+            println!("vertex_buffer[5]: {:?}", algorithm_data.vertex_buffer[5]);
+
+            let vertex_buffer_size =
+                (size_of::<[Vec3; 3]>() * algorithm_data.vertex_buffer.len()) as u64;
 
             let staging_buffer = AllocatedBuffer::new(
                 &device,
@@ -681,7 +720,7 @@ impl ApplicationHandler for App {
                 align_of::<f32>() as u64,
                 vertex_buffer_size,
             );
-            staging_buffer_slice.copy_from_slice(&vertex_positions);
+            staging_buffer_slice.copy_from_slice(algorithm_data.vertex_buffer.as_slice());
             device.unmap_memory(staging_buffer.allocation);
 
             let vertex_buffer = AllocatedBuffer::new(
@@ -849,35 +888,6 @@ impl ApplicationHandler for App {
                 )
                 .expect("Could not create graphics pipeline")[0];
 
-            let halfedge_mesh = HalfedgeMesh {
-                verts: vec![
-                    Vec3::new(1.0, 0.0, 0.0),
-                    Vec3::new(0.0, 1.0, 0.0),
-                    Vec3::new(-1.0, 0.0, 0.0),
-                    Vec3::new(0.0, -1.0, 0.0),
-                ],
-                indices: vec![2, 0, 1, 0, 2, 3],
-                faces: vec![
-                    Face {
-                        v0: 0,
-                        num_verts: 3,
-                    },
-                    Face {
-                        v0: 3,
-                        num_verts: 3,
-                    },
-                ],
-                neighbors: vec![
-                    [1, 2, 3],
-                    [2, 0, u32::MAX],
-                    [0, 1, u32::MAX],
-                    [4, 5, 0],
-                    [5, 3, u32::MAX],
-                    [3, 4, u32::MAX],
-                ],
-            };
-            let algorithm_data = PipelineData::new(halfedge_mesh, 17);
-
             self.state = Some(State {
                 window: window,
                 instance: instance,
@@ -898,6 +908,7 @@ impl ApplicationHandler for App {
                 command_reuse_fences: command_reuse_fences,
                 frame_pace_semaphore: frame_pace_semaphore,
                 vertex_buffer: vertex_buffer,
+                algorithm_data: algorithm_data,
             })
         }
     }

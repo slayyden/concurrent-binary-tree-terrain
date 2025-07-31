@@ -89,9 +89,9 @@ impl AllocatedBuffer {
 }
 
 pub struct CBT {
-    depth: u32, // number of edges from the root to a furthest leaf
-    interior: Vec<u32>,
-    leaves: Vec<AtomicU32>,
+    pub depth: u32, // number of edges from the root to a furthest leaf
+    pub interior: Vec<u32>,
+    pub leaves: Vec<AtomicU32>,
 }
 
 const BITFIELD_INT_SIZE: u32 = 32;
@@ -758,9 +758,9 @@ pub fn heapid_to_vertices(
     return curr_bisector;
 }
 
-struct Face {
-    v0: u32,
-    num_verts: u32,
+pub struct Face {
+    pub v0: u32,
+    pub num_verts: u32,
 }
 
 pub struct HalfedgeMesh {
@@ -1287,6 +1287,10 @@ impl PipelineData {
             Vec3::new(0.0, 0.0, 0.0),
             Vec3::new(0.0, 0.0, 0.0),
         ];
+        let mut vertex_buffer = vec![UNINITIALIZED_TRIANGLE_VERTS; num_memory_blocks];
+        for i in 0..root_bisector_vertices.len() {
+            vertex_buffer[i] = root_bisector_vertices[i];
+        }
 
         Self {
             root_bisector_vertices: root_bisector_vertices,
@@ -1319,7 +1323,7 @@ impl PipelineData {
             merging_bisector_count: AtomicU32::new(0),
             merging_bisector_buffer: vec![0; num_memory_blocks],
 
-            vertex_buffer: vec![UNINITIALIZED_TRIANGLE_VERTS; num_memory_blocks],
+            vertex_buffer: vertex_buffer,
         }
     }
 
