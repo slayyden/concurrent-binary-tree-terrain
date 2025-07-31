@@ -454,11 +454,6 @@ pub fn heapid_to_vertices(
 
     let mut curr_bisector = root_bisectors[root_bisector_index as usize];
     let mut peak_idx: u32 = 2; // index of vertex that is the peak
-    if heapid == 0b1000_10 {
-        println!("depth: {:?}", depth);
-        println!("root_bisector_index: {:?}", root_bisector_index);
-        println!("split_code: {:b}", split_code);
-    }
     for i in (0..(depth - base_level)).rev() {
         let bit = (split_code >> i) & 0b0000_0000_0000_0001;
 
@@ -581,7 +576,7 @@ const CHILD_EDGE_TYPE_LUT: [[[u8; 2]; 3]; 4] = [
     // RIGHT_DOUBLE_SPLIT
     [[NEXT_U8, PREV_U8], [TWIN_U8, TWIN_U8], [NEXT_U8, TWIN_U8]],
     // LEFT_DOUBLE_SPLIT
-    [[TWIN_U8, TWIN_U8], [NEXT_U8, PREV_U8], [TWIN_U8, NEXT_U8]],
+    [[TWIN_U8, TWIN_U8], [NEXT_U8, PREV_U8], [TWIN_U8, PREV_U8]],
     // TRIPLE_SPLIT
     [[NEXT_U8, PREV_U8], [NEXT_U8, PREV_U8], [TWIN_U8, TWIN_U8]],
 ];
@@ -636,7 +631,6 @@ pub fn update_pointers(
     cbt: &mut CBT,
 ) {
     let curr_heapid = heap_id_buffer[curr_id as usize];
-    println!("curr_heapid: {:?}", curr_heapid);
     let curr_command = bisector_command_buffer[curr_id as usize].load(Ordering::Relaxed);
     debug_assert!(curr_command != NO_SPLIT);
     let neighbors = neighbor_buffer[curr_id as usize];
@@ -675,6 +669,7 @@ pub fn update_pointers(
                 neighbor_slot = neighbor_allocation_indices[neighbor_slots[1] as usize]; // left and right are flipped from the neighbor's perspective
             }
         }
+
         neighbor_buffer[slot][edge_type] = neighbor_slot;
 
         // this edge was split, write pointers to the second child
@@ -682,6 +677,7 @@ pub fn update_pointers(
             let slot = curr_allocation_indices[bisector_slots[1] as usize] as usize;
             let edge_type = edge_types[1] as usize;
             let neighbor_slot = neighbor_allocation_indices[neighbor_slots[0] as usize];
+
             neighbor_buffer[slot][edge_type] = neighbor_slot;
         }
     }
@@ -1097,7 +1093,6 @@ impl PipelineData {
         // split and update pointers
         for i in 0..self.splitting_buffer_count.load(Ordering::Relaxed) {
             let curr_id = self.splitting_buffer[i as usize];
-            println!("curr_id: {:?}", curr_id);
             update_pointers(
                 curr_id,
                 &mut self.neighbors_buffer,
@@ -1147,8 +1142,6 @@ impl PipelineData {
                 self.base_depth,
                 &self.root_bisector_vertices[..],
             );
-            println!("i: {:?}", curr_id);
-            println!("vert: {:?}", self.vertex_buffer[i as usize]);
         }
     }
 
@@ -1559,10 +1552,10 @@ mod tests {
 
         println!("Segment 2 completed\n");
         pipeline_data.reset();
-        pipeline_data.want_split_buffer[0] = 14; // bisector 6 wants to split now
         pipeline_data
             .want_split_buffer_count
             .fetch_add(1, Ordering::Relaxed);
+        pipeline_data.want_split_buffer[0] = 9;
         pipeline_data.iterate();
 
         assert_eq!(pipeline_data.neighbors_buffer[0], [3, 15, 11]);
@@ -1578,8 +1571,30 @@ mod tests {
         assert_eq!(pipeline_data.neighbors_buffer[13], [11, 12, 5]);
         assert_eq!(pipeline_data.neighbors_buffer[14], [15, 3, 16]);
         assert_eq!(pipeline_data.neighbors_buffer[15], [0, 14, 7]);
-        assert_eq!(pipeline_data.neighbors_buffer[16], [17, 18, 14]);
-        assert_eq!(pipeline_data.neighbors_buffer[17], [16, 6, u32::MAX]);
-        assert_eq!(pipeline_data.neighbors_buffer[18], [16, u32::MAX, 7]);
+        assert_eq!(pipeline_data.neighbors_buffer[16], [18, 14, 17]);
+        assert_eq!(pipeline_data.neighbors_buffer[17], [u32::MAX, 16, 6]);
+        assert_eq!(pipeline_data.neighbors_buffer[18], [7, 16, u32::MAX]);
+
+        println!("Segment 3 completed\n");
+
+        pipeline_data.reset();
+        pipeline_data
+            .want_split_buffer_count
+            .fetch_add(1, Ordering::Relaxed);
+        pipeline_data.want_split_buffer[0] = 14;
+        pipeline_data.iterate();
+
+        assert_eq!(pipeline_data.neighbors_buffer[2], [9, 20, 15]);
+        assert_eq!(pipeline_data.neighbors_buffer[9], [19, 2, 3]);
+        assert_eq!(pipeline_data.neighbors_buffer[10], [20, 23, 18]);
+        assert_eq!(pipeline_data.neighbors_buffer[15], [0, 2, 7]);
+        assert_eq!(pipeline_data.neighbors_buffer[18], [7, 10, u32::MAX]);
+        assert_eq!(pipeline_data.neighbors_buffer[19], [20, 9, 22]);
+        assert_eq!(pipeline_data.neighbors_buffer[20], [2, 19, 10]);
+        assert_eq!(pipeline_data.neighbors_buffer[21], [23, 25, u32::MAX]);
+        assert_eq!(pipeline_data.neighbors_buffer[22], [23, 19, 24]);
+        assert_eq!(pipeline_data.neighbors_buffer[23], [10, 22, 21]);
+        assert_eq!(pipeline_data.neighbors_buffer[24], [25, 22, 8]);
+        assert_eq!(pipeline_data.neighbors_buffer[25], [21, 24, u32::MAX]);
     }
 }

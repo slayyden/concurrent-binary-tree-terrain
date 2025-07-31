@@ -954,30 +954,50 @@ impl ApplicationHandler for App {
                 ..
             } => match key.as_ref() {
                 Key::Character("S") => {
-                    let split_slots = [1, 7, 9, 14, 16];
-                    if state.iteration_counter < split_slots.len() as u32 {
-                        let slot = split_slots[state.iteration_counter as usize];
+                    // let split_slots = [1, 7, 9, 14, 19];
+                    // let split_slots = [1, 7, 9, 14, 16];
+                    // if state.iteration_counter < split_slots.len() as u32 {
+                    // let slot = split_slots[state.iteration_counter as usize];
+                    let slots = [
+                        state.algorithm_data.cbt.one_bit_to_id(
+                            state.iteration_counter % state.algorithm_data.cbt.interior[0],
+                        ),
+                        (state.algorithm_data.cbt.one_bit_to_id(
+                            state.iteration_counter + 1 % state.algorithm_data.cbt.interior[0],
+                        )),
+                        (state.algorithm_data.cbt.one_bit_to_id(
+                            state.iteration_counter + 2 % state.algorithm_data.cbt.interior[0],
+                        )),
+                        (state.algorithm_data.cbt.one_bit_to_id(
+                            state.iteration_counter + 3 % state.algorithm_data.cbt.interior[0],
+                        )),
+                    ];
+                    // println!("Refining tri and at slot {:?}", slot);
+                    for slot in slots {
                         let leaf = state.algorithm_data.cbt.leaves[(slot / 32) as usize]
                             .load(Ordering::Relaxed);
-                        println!("leaf: {:b}", leaf);
-                        debug_assert!(leaf & !(1 << (slot % 32)) != 0,);
+                        // println!("Leaf: {:b}", leaf);
+                        debug_assert!(leaf & (1 << (slot % 32)) != 0);
+                    }
 
+                    state
+                        .algorithm_data
+                        .want_split_buffer_count
+                        .fetch_add(slots.len() as u32, Ordering::Relaxed);
+                    for (i, slot) in slots.iter().enumerate() {
+                        state.algorithm_data.want_split_buffer[i] = *slot;
+                    }
+                    state.algorithm_data.iterate();
+                    state.iteration_counter += 1;
+                    state.algorithm_data.reset();
+                    debug_assert!(
                         state
                             .algorithm_data
                             .want_split_buffer_count
-                            .fetch_add(1, Ordering::Relaxed);
-                        state.algorithm_data.want_split_buffer[0] = slot;
-                        state.algorithm_data.iterate();
-                        state.iteration_counter += 1;
-                        state.algorithm_data.reset();
-                        debug_assert!(
-                            state
-                                .algorithm_data
-                                .want_split_buffer_count
-                                .load(Ordering::Relaxed)
-                                == 0
-                        );
-                    }
+                            .load(Ordering::Relaxed)
+                            == 0
+                    );
+                    // }
                     let vertex_buffer_size =
                         (size_of::<[Vec3; 3]>() * state.algorithm_data.vertex_buffer.len()) as u64;
                     unsafe {
