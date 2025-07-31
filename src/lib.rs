@@ -402,6 +402,48 @@ mod tests {
         // end
         assert_eq!(cbt.zero_bit_to_id(20), u32::MAX);
     }
+
+    #[test]
+    fn test_iterate1() {
+        let halfedge_mesh = HalfedgeMesh {
+            verts: vec![
+                Vec3::new(1.0, 0.0, 0.0),
+                Vec3::new(0.0, 1.0, 0.0),
+                Vec3::new(-1.0, 0.0, 0.0),
+                Vec3::new(0.0, -1.0, 0.0),
+            ],
+            indices: vec![0, 1, 2, 0, 2, 3],
+            faces: vec![
+                Face {
+                    v0: 0,
+                    num_verts: 3,
+                },
+                Face {
+                    v0: 3,
+                    num_verts: 3,
+                },
+            ],
+            neighbors: vec![
+                [1, 2, 3],
+                [2, 0, u32::MAX],
+                [0, 1, u32::MAX],
+                [4, 5, 3],
+                [5, 3, u32::MAX],
+                [3, 4, u32::MAX],
+            ],
+        };
+        let pipeline_data = PipelineData::new(halfedge_mesh, 8);
+
+        let root_bisector_vertices = pipeline_data.root_bisector_vertices;
+        println!("hewo");
+        println!("{:?}", root_bisector_vertices);
+
+        assert_eq!(pipeline_data.cbt.leaves.len(), 8);
+        assert_eq!(
+            pipeline_data.cbt.leaves[0].load(Ordering::Relaxed),
+            0x0000_003F // there are 6 root bisectors
+        );
+    }
 }
 
 const NO_SPLIT: u32 = 0;
@@ -629,15 +671,15 @@ impl HalfedgeMesh {
             let face_midpoint = face_midpoint / Vec3::splat(face.num_verts as f32);
 
             // get first 2 verts for each bisector
-            for vert_idx in face.v0..(face.v0 + face.num_verts - 1) {
-                let v0 = self.verts[self.indices[vert_idx as usize] as usize];
-                let v1 = self.verts[self.indices[(vert_idx + 1) as usize] as usize];
+            for i in 0..face.num_verts {
+                let v0 = self.verts[self.indices[(face.v0 + i) as usize] as usize];
+                let v1 = self.verts
+                    [self.indices[(face.v0 + ((i + 1) % face.num_verts)) as usize] as usize];
 
                 let root_bisector = [v0, v1, face_midpoint];
                 ret.push(root_bisector);
             }
         }
-
         return ret;
     }
 }
@@ -1022,12 +1064,12 @@ impl PipelineData {
         let mut cbt = CBT::new(depth);
         let num_memory_blocks = cbt.leaves.len() * BITFIELD_INT_SIZE as usize;
 
-        let mut heapid_buffer = Vec::<u32>::with_capacity(num_memory_blocks);
+        let mut heapid_buffer = vec![0; num_memory_blocks];
         for i in 0..root_bisector_vertices.len() {
             heapid_buffer[i] = (i | (1 << base_depth)) as u32;
         }
 
-        let mut neighbors_buffer = Vec::<[u32; 3]>::with_capacity(num_memory_blocks);
+        let mut neighbors_buffer = vec![[0, 0, 0]; num_memory_blocks];
         for i in 0..root_bisector_vertices.len() {
             neighbors_buffer[i] = halfedge_mesh.neighbors[i];
         }
@@ -1043,7 +1085,7 @@ impl PipelineData {
         let mut bisector_split_command_buffer = Vec::<AtomicU32>::new();
         bisector_split_command_buffer.resize_with(num_memory_blocks, || AtomicU32::new(0));
 
-        const uninitialized_triangle_verts: [Vec3; 3] = [
+        const UNINITIALIZED_TRIANGLE_VERTS: [Vec3; 3] = [
             Vec3::new(0.0, 0.0, 0.0),
             Vec3::new(0.0, 0.0, 0.0),
             Vec3::new(0.0, 0.0, 0.0),
@@ -1079,7 +1121,7 @@ impl PipelineData {
             merging_bisector_count: AtomicU32::new(0),
             merging_bisector_buffer: vec![0; num_memory_blocks],
 
-            vertex_buffer: vec![uninitialized_triangle_verts; num_memory_blocks],
+            vertex_buffer: vec![UNINITIALIZED_TRIANGLE_VERTS; num_memory_blocks],
         }
     }
 
