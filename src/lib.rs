@@ -466,8 +466,8 @@ mod tests {
             [6, 7, u32::MAX, u32::MAX]
         );
         assert_eq!(pipeline_data.cbt.interior[0], 7); // we added 1 more bisector
-        assert_eq!(pipeline_data.heapid_buffer[6], 0b10011);
-        assert_eq!(pipeline_data.heapid_buffer[7], 0b10010);
+        assert_eq!(pipeline_data.heapid_buffer[6], 0b1001_1);
+        assert_eq!(pipeline_data.heapid_buffer[7], 0b1001_0);
         assert_eq!(pipeline_data.neighbors_buffer[0], [7, 2, 3]);
         assert_eq!(pipeline_data.neighbors_buffer[2], [0, 6, u32::MAX]);
         assert_eq!(pipeline_data.neighbors_buffer[3], [4, 5, 0]);
@@ -477,7 +477,6 @@ mod tests {
         assert_eq!(pipeline_data.neighbors_buffer[7], [u32::MAX, 6, 0]);
 
         println!("Segment 1 completed\n");
-        return;
         pipeline_data.reset();
 
         pipeline_data
@@ -485,20 +484,13 @@ mod tests {
             .fetch_add(1, Ordering::Relaxed);
         pipeline_data.want_split_buffer[0] = 7; // bisector 6 wants to split now
 
-        println!(
-            "want_split_buffer_count: {:?}",
-            pipeline_data
-                .want_split_buffer_count
-                .load(Ordering::Relaxed)
-        );
-
         pipeline_data.iterate();
 
-        assert_eq!(pipeline_data.cbt.interior[0], 11); // we added 1 more bisector
-        assert_eq!(pipeline_data.heapid_buffer[7], 0b1001_01);
+        assert_eq!(pipeline_data.cbt.interior[0], 11);
+        assert_eq!(pipeline_data.heapid_buffer[1], 0b1001_01);
         assert_eq!(pipeline_data.heapid_buffer[8], 0b1001_00);
         assert_eq!(pipeline_data.heapid_buffer[9], 0b1000_11);
-        assert_eq!(pipeline_data.heapid_buffer[10], 0b1000_00);
+        assert_eq!(pipeline_data.heapid_buffer[10], 0b1000_0);
         assert_eq!(pipeline_data.heapid_buffer[11], 0b1000_10);
         assert_eq!(pipeline_data.heapid_buffer[12], 0b1011_1);
         assert_eq!(pipeline_data.heapid_buffer[13], 0b1011_0);
@@ -507,13 +499,59 @@ mod tests {
         assert_eq!(pipeline_data.neighbors_buffer[4], [5, 12, u32::MAX]);
         assert_eq!(pipeline_data.neighbors_buffer[5], [13, 4, u32::MAX]);
         assert_eq!(pipeline_data.neighbors_buffer[6], [8, u32::MAX, 2]);
-        assert_eq!(pipeline_data.neighbors_buffer[7], [8, 14, u32::MAX]);
-        assert_eq!(pipeline_data.neighbors_buffer[8], [9, 7, 6]);
-        assert_eq!(pipeline_data.neighbors_buffer[9], [14, 8, 10]);
+        assert_eq!(pipeline_data.neighbors_buffer[1], [8, 11, u32::MAX]);
+        assert_eq!(pipeline_data.neighbors_buffer[8], [9, 1, 6]);
+        assert_eq!(pipeline_data.neighbors_buffer[9], [11, 8, 10]);
         assert_eq!(pipeline_data.neighbors_buffer[10], [12, 9, 2]);
-        assert_eq!(pipeline_data.neighbors_buffer[11], [7, 9, 13]);
+        assert_eq!(pipeline_data.neighbors_buffer[11], [1, 9, 13]);
         assert_eq!(pipeline_data.neighbors_buffer[12], [13, 10, 4]);
-        assert_eq!(pipeline_data.neighbors_buffer[13], [14, 12, 5]);
+        assert_eq!(pipeline_data.neighbors_buffer[13], [11, 12, 5]);
+
+        println!("Segment 2 completed\n");
+        pipeline_data.reset();
+
+        pipeline_data.bisector_state_buffer[1] = SIMPLIFY;
+        pipeline_data.bisector_state_buffer[8] = SIMPLIFY;
+        pipeline_data.bisector_state_buffer[9] = SIMPLIFY;
+        pipeline_data.bisector_state_buffer[11] = SIMPLIFY;
+
+        pipeline_data
+            .want_merge_buffer_count
+            .fetch_add(2, Ordering::Relaxed);
+        pipeline_data.want_merge_buffer[0] = 1;
+        pipeline_data.want_merge_buffer[1] = 9;
+
+        pipeline_data.iterate();
+
+        assert_eq!(pipeline_data.cbt.interior[0], 9);
+        assert_eq!(pipeline_data.heapid_buffer[1], 0b1001_0);
+        assert_eq!(pipeline_data.heapid_buffer[9], 0b1000_1);
+
+        assert_eq!(pipeline_data.neighbors_buffer[1], [u32::MAX, 6, 9]);
+        assert_eq!(pipeline_data.neighbors_buffer[6], [1, u32::MAX, 2]);
+        assert_eq!(pipeline_data.neighbors_buffer[9], [10, 13, 1]);
+        assert_eq!(pipeline_data.neighbors_buffer[10], [12, 9, 2]);
+        assert_eq!(pipeline_data.neighbors_buffer[13], [9, 12, 5]);
+
+        println!("Segment 3 completed\n");
+
+        pipeline_data.reset();
+
+        pipeline_data.bisector_state_buffer[1] = SIMPLIFY;
+        pipeline_data.bisector_state_buffer[6] = SIMPLIFY;
+
+        pipeline_data
+            .want_merge_buffer_count
+            .fetch_add(1, Ordering::Relaxed);
+        pipeline_data.want_merge_buffer[0] = 6; // enqueue ODD heapids for simplification
+
+        pipeline_data.iterate();
+        assert_eq!(pipeline_data.cbt.interior[0], 8);
+        assert_eq!(pipeline_data.heapid_buffer[6], 0b1001_);
+
+        assert_eq!(pipeline_data.neighbors_buffer[6], [2, 9, u32::MAX]);
+        assert_eq!(pipeline_data.neighbors_buffer[2], [10, 6, u32::MAX]);
+        assert_eq!(pipeline_data.neighbors_buffer[9], [10, 13, 6]);
     }
 }
 
@@ -574,7 +612,7 @@ pub fn split_element(
         }
     }
 
-    println!("curr_id: {:b}", curr_id);
+    // println!("curr_id: {:b}", curr_id);
     let heapid = heapid_buffer[curr_id as usize];
     let current_depth = heap_id_depth(heapid);
 
@@ -589,8 +627,6 @@ pub fn split_element(
             2
             // worst case: we must traverse up the tree
         } else {
-            println!("current_depth: {:?}", current_depth);
-            println!("base_depth: {:?}", base_depth);
             2 * (current_depth - base_depth) - 1
         };
 
@@ -856,10 +892,7 @@ fn find_edge_type(curr_id: u32, neighbor_neighbors: [u32; 3]) -> usize {
     } else if neighbor_neighbors[PREV] == curr_id {
         PREV
     } else {
-        if neighbor_neighbors[TWIN] != curr_id {
-            println!("curr_id: {:?}", curr_id);
-            println!("neighbor_neighbors: {:?}", neighbor_neighbors);
-        }
+        if neighbor_neighbors[TWIN] != curr_id {}
         debug_assert!(neighbor_neighbors[TWIN] == curr_id);
         TWIN
     }
@@ -881,6 +914,7 @@ pub fn update_pointers(
     cbt: &mut CBT,
 ) {
     let curr_heapid = heap_id_buffer[curr_id as usize];
+    println!("curr_heapid: {:?}", curr_heapid);
     let curr_command = bisector_command_buffer[curr_id as usize].load(Ordering::Relaxed);
     debug_assert!(curr_command != NO_SPLIT);
     let neighbors = neighbor_buffer[curr_id as usize];
@@ -905,8 +939,6 @@ pub fn update_pointers(
         if neighbor_index != u32::MAX {
             let neighbor_command =
                 bisector_command_buffer[neighbor_index as usize].load(Ordering::Relaxed);
-            println!("neighbor_index: {:?}", neighbor_index);
-            println!("curr_neighbors: {:?}", neighbors);
             let neighbor_edge = find_edge_type(curr_id, neighbor_buffer[neighbor_index as usize]);
             if neighbor_command == NO_SPLIT {
                 // non-split tris are not dispatched, so we update them as well
@@ -1044,15 +1076,16 @@ pub fn prepare_merge(
 
     let mut num_pairs_to_merge = 1 as u32;
     // We need to identify our twin pair
-    let twin_lowid = next_neighbors[NEXT];
-    let twin_highid = curr_neighbors[PREV];
+    let twin_highid = next_neighbors[NEXT];
+    let twin_lowid = curr_neighbors[PREV];
     if twin_lowid != u32::MAX {
         // Grab the two bisectors
         let twin_low_heapid = heap_id_buffer[twin_lowid as usize];
         let twin_high_heapid = heap_id_buffer[twin_highid as usize];
+        debug_assert!(twin_high_heapid > twin_low_heapid);
 
-        // The current bisector is not the smallest element of the neighborhood, he will be handeled by twinLowBisect if needed
-        if curr_heapid > twin_low_heapid {
+        // The current bisector is not the greatest element of the neighborhood, he will be handeled by twinLowBisect if needed
+        if curr_heapid < twin_high_heapid {
             return;
         }
 
@@ -1078,10 +1111,11 @@ pub fn prepare_merge(
 
         // remove reference to twin_high
         let twin_high_neighbors = neighbor_buffer[twin_highid as usize];
+
         if twin_high_neighbors[TWIN] != u32::MAX {
             let twin_high_twin_neighbors = neighbor_buffer[twin_high_neighbors[TWIN] as usize];
             let edge_type = find_edge_type(twin_highid, twin_high_twin_neighbors);
-            neighbor_buffer[twin_high_neighbors[TWIN] as usize][edge_type] = twin_lowid;
+            neighbor_buffer[twin_high_neighbors[TWIN] as usize][edge_type] = twin_highid;
         }
         num_pairs_to_merge = 2;
     }
@@ -1090,7 +1124,7 @@ pub fn prepare_merge(
     let base_slot = simplification_counter.fetch_add(num_pairs_to_merge, Ordering::Relaxed);
     simplification_buffer[base_slot as usize] = curr_id;
     if num_pairs_to_merge == 2 {
-        simplification_buffer[(base_slot + 1) as usize] = twin_lowid;
+        simplification_buffer[(base_slot + 1) as usize] = twin_highid;
     }
 }
 
@@ -1109,7 +1143,7 @@ pub fn merge(
     let new_neighbors = [
         curr_neighbors[TWIN], // NEXT
         next_neighbors[TWIN], // PREV
-        curr_neighbors[PREV], // TWIN
+        next_neighbors[NEXT], // TWIN
     ];
 
     neighbor_buffer[curr_id as usize] = new_neighbors;
@@ -1282,6 +1316,7 @@ impl PipelineData {
         // split and update pointers
         for i in 0..self.splitting_buffer_count.load(Ordering::Relaxed) {
             let curr_id = self.splitting_buffer[i as usize];
+            println!("curr_id: {:?}", curr_id);
             update_pointers(
                 curr_id,
                 &mut self.neighbors_buffer,
