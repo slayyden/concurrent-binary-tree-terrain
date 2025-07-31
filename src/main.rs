@@ -7,6 +7,7 @@ use ash::{
     vk,
 };
 use dirt_jam::*;
+use glam::Vec3;
 use std::{cmp::max, error::Error, io::Cursor, os::raw::c_char, u64};
 use winit::{
     application::ApplicationHandler,
@@ -847,6 +848,35 @@ impl ApplicationHandler for App {
                     None,
                 )
                 .expect("Could not create graphics pipeline")[0];
+
+            let halfedge_mesh = HalfedgeMesh {
+                verts: vec![
+                    Vec3::new(1.0, 0.0, 0.0),
+                    Vec3::new(0.0, 1.0, 0.0),
+                    Vec3::new(-1.0, 0.0, 0.0),
+                    Vec3::new(0.0, -1.0, 0.0),
+                ],
+                indices: vec![2, 0, 1, 0, 2, 3],
+                faces: vec![
+                    Face {
+                        v0: 0,
+                        num_verts: 3,
+                    },
+                    Face {
+                        v0: 3,
+                        num_verts: 3,
+                    },
+                ],
+                neighbors: vec![
+                    [1, 2, 3],
+                    [2, 0, u32::MAX],
+                    [0, 1, u32::MAX],
+                    [4, 5, 0],
+                    [5, 3, u32::MAX],
+                    [3, 4, u32::MAX],
+                ],
+            };
+            let algorithm_data = PipelineData::new(halfedge_mesh, 17);
 
             self.state = Some(State {
                 window: window,

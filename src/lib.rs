@@ -763,11 +763,11 @@ struct Face {
     num_verts: u32,
 }
 
-struct HalfedgeMesh {
-    verts: Vec<Vec3>,
-    faces: Vec<Face>,
-    indices: Vec<u32>,
-    neighbors: Vec<[u32; 3]>,
+pub struct HalfedgeMesh {
+    pub verts: Vec<Vec3>,
+    pub faces: Vec<Face>,
+    pub indices: Vec<u32>,
+    pub neighbors: Vec<[u32; 3]>,
 }
 
 impl HalfedgeMesh {
@@ -1160,7 +1160,7 @@ struct PushConstants {
 }
 
 #[repr(C)]
-struct SceneDataGPU {
+pub struct SceneDataGPU {
     // written once at initialization
     root_bisector_vertices: vk::DeviceAddress,
     // our concurrent binary tree
@@ -1199,7 +1199,7 @@ struct SceneDataGPU {
 }
 
 #[repr(C)]
-struct DispatchSizeGPU {
+pub struct DispatchSizeGPU {
     remaining_memory_count: vk::DispatchIndirectCommand,
     allocation_counter: vk::DispatchIndirectCommand,
     want_split_buffer_count: vk::DispatchIndirectCommand,
@@ -1208,43 +1208,43 @@ struct DispatchSizeGPU {
     merging_bisector_count: vk::DispatchIndirectCommand,
 }
 
-struct PipelineData {
+pub struct PipelineData {
     // written once at initialization
-    root_bisector_vertices: Vec<[Vec3; 3]>,
-    num_memory_blocks: u32,
-    base_depth: u32,
+    pub root_bisector_vertices: Vec<[Vec3; 3]>,
+    pub num_memory_blocks: u32,
+    pub base_depth: u32,
 
     // our concurrent binary tree
-    cbt: CBT,
+    pub cbt: CBT,
 
     // SoA for bisector struct
-    neighbors_buffer: Vec<[u32; 3]>,
-    heapid_buffer: Vec<u32>,
-    allocation_indices_buffer: Vec<[u32; 4]>,
+    pub neighbors_buffer: Vec<[u32; 3]>,
+    pub heapid_buffer: Vec<u32>,
+    pub allocation_indices_buffer: Vec<[u32; 4]>,
     // UNCHANGED, SPLIT, OR MERGE
-    bisector_state_buffer: Vec<u8>,
+    pub bisector_state_buffer: Vec<u8>,
     // has to be u32 for atomic reasons :(
-    bisector_split_command_buffer: Vec<AtomicU32>,
+    pub bisector_split_command_buffer: Vec<AtomicU32>,
 
     // intermediary buffers for various stages
     // use this later
-    classification_buffer: Vec<u8>,
+    pub classification_buffer: Vec<u8>,
 
-    remaining_memory_count: AtomicU32,
-    allocation_counter: AtomicU32,
-    want_split_buffer_count: AtomicU32,
-    want_split_buffer: Vec<u32>,
+    pub remaining_memory_count: AtomicU32,
+    pub allocation_counter: AtomicU32,
+    pub want_split_buffer_count: AtomicU32,
+    pub want_split_buffer: Vec<u32>,
 
-    splitting_buffer_count: AtomicU32,
-    splitting_buffer: Vec<u32>,
+    pub splitting_buffer_count: AtomicU32,
+    pub splitting_buffer: Vec<u32>,
 
-    want_merge_buffer_count: AtomicU32,
-    want_merge_buffer: Vec<u32>,
+    pub want_merge_buffer_count: AtomicU32,
+    pub want_merge_buffer: Vec<u32>,
 
-    merging_bisector_count: AtomicU32,
-    merging_bisector_buffer: Vec<u32>,
+    pub merging_bisector_count: AtomicU32,
+    pub merging_bisector_buffer: Vec<u32>,
 
-    vertex_buffer: Vec<[Vec3; 3]>,
+    pub vertex_buffer: Vec<[Vec3; 3]>,
 }
 
 impl PipelineData {
