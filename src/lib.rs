@@ -429,7 +429,7 @@ mod tests {
                 [1, 2, 3],
                 [2, 0, u32::MAX],
                 [0, 1, u32::MAX],
-                [4, 5, 3],
+                [4, 5, 0],
                 [5, 3, u32::MAX],
                 [3, 4, u32::MAX],
             ],
@@ -457,15 +457,63 @@ mod tests {
 
         pipeline_data.iterate();
 
+        println!(
+            "bitfield: {:b}",
+            pipeline_data.cbt.leaves[0].load(Ordering::Relaxed)
+        );
         assert_eq!(
             pipeline_data.allocation_indices_buffer[1],
-            [1, 6, u32::MAX, u32::MAX]
+            [6, 7, u32::MAX, u32::MAX]
         );
         assert_eq!(pipeline_data.cbt.interior[0], 7); // we added 1 more bisector
-        assert_eq!(pipeline_data.heapid_buffer[1], 0b10011);
-        assert_eq!(pipeline_data.heapid_buffer[6], 0b10010);
-        assert_eq!(pipeline_data.neighbors_buffer[1], [6, u32::MAX, 2]);
-        assert_eq!(pipeline_data.neighbors_buffer[6], [u32::MAX, 1, 0]);
+        assert_eq!(pipeline_data.heapid_buffer[6], 0b10011);
+        assert_eq!(pipeline_data.heapid_buffer[7], 0b10010);
+        assert_eq!(pipeline_data.neighbors_buffer[0], [7, 2, 3]);
+        assert_eq!(pipeline_data.neighbors_buffer[2], [0, 6, u32::MAX]);
+        assert_eq!(pipeline_data.neighbors_buffer[3], [4, 5, 0]);
+        assert_eq!(pipeline_data.neighbors_buffer[4], [5, 3, u32::MAX]);
+        assert_eq!(pipeline_data.neighbors_buffer[5], [3, 4, u32::MAX]);
+        assert_eq!(pipeline_data.neighbors_buffer[6], [7, u32::MAX, 2]);
+        assert_eq!(pipeline_data.neighbors_buffer[7], [u32::MAX, 6, 0]);
+
+        println!("Segment 1 completed\n");
+        return;
+        pipeline_data.reset();
+
+        pipeline_data
+            .want_split_buffer_count
+            .fetch_add(1, Ordering::Relaxed);
+        pipeline_data.want_split_buffer[0] = 7; // bisector 6 wants to split now
+
+        println!(
+            "want_split_buffer_count: {:?}",
+            pipeline_data
+                .want_split_buffer_count
+                .load(Ordering::Relaxed)
+        );
+
+        pipeline_data.iterate();
+
+        assert_eq!(pipeline_data.cbt.interior[0], 11); // we added 1 more bisector
+        assert_eq!(pipeline_data.heapid_buffer[7], 0b1001_01);
+        assert_eq!(pipeline_data.heapid_buffer[8], 0b1001_00);
+        assert_eq!(pipeline_data.heapid_buffer[9], 0b1000_11);
+        assert_eq!(pipeline_data.heapid_buffer[10], 0b1000_00);
+        assert_eq!(pipeline_data.heapid_buffer[11], 0b1000_10);
+        assert_eq!(pipeline_data.heapid_buffer[12], 0b1011_1);
+        assert_eq!(pipeline_data.heapid_buffer[13], 0b1011_0);
+
+        assert_eq!(pipeline_data.neighbors_buffer[2], [10, 6, u32::MAX]);
+        assert_eq!(pipeline_data.neighbors_buffer[4], [5, 12, u32::MAX]);
+        assert_eq!(pipeline_data.neighbors_buffer[5], [13, 4, u32::MAX]);
+        assert_eq!(pipeline_data.neighbors_buffer[6], [8, u32::MAX, 2]);
+        assert_eq!(pipeline_data.neighbors_buffer[7], [8, 14, u32::MAX]);
+        assert_eq!(pipeline_data.neighbors_buffer[8], [9, 7, 6]);
+        assert_eq!(pipeline_data.neighbors_buffer[9], [14, 8, 10]);
+        assert_eq!(pipeline_data.neighbors_buffer[10], [12, 9, 2]);
+        assert_eq!(pipeline_data.neighbors_buffer[11], [7, 9, 13]);
+        assert_eq!(pipeline_data.neighbors_buffer[12], [13, 10, 4]);
+        assert_eq!(pipeline_data.neighbors_buffer[13], [14, 12, 5]);
     }
 }
 
@@ -526,7 +574,9 @@ pub fn split_element(
         }
     }
 
-    let current_depth = heap_id_depth(curr_id);
+    println!("curr_id: {:b}", curr_id);
+    let heapid = heapid_buffer[curr_id as usize];
+    let current_depth = heap_id_depth(heapid);
 
     let twin_id = curr_neighbors[TWIN];
     let max_required_memory =
@@ -539,6 +589,8 @@ pub fn split_element(
             2
             // worst case: we must traverse up the tree
         } else {
+            println!("current_depth: {:?}", current_depth);
+            println!("base_depth: {:?}", base_depth);
             2 * (current_depth - base_depth) - 1
         };
 
@@ -651,12 +703,12 @@ pub fn heapid_to_vertices(
     let split_code = !(0xFFFF_FFFF << num_split_code_bits) & heapid;
 
     let mut curr_bisector = root_bisectors[root_bisector_index as usize];
-    let mut peak_idx: i32 = 2; // index of vertex that is the peak
+    let mut peak_idx: u32 = 2; // index of vertex that is the peak
 
     for i in 0..(depth - base_level) {
         let bit = (split_code >> i) & 0b0000_0000_0000_0001;
 
-        let replacement_slot = if bit != 0 { peak_idx + 1 } else { peak_idx - 1 } % 3;
+        let replacement_slot = if bit != 0 { peak_idx + 1 } else { peak_idx + 2 } % 3;
         let refinement_edge = [
             curr_bisector[((peak_idx + 1) % 3) as usize],
             curr_bisector[((peak_idx + 2) % 3) as usize],
@@ -710,23 +762,25 @@ impl HalfedgeMesh {
 pub fn allocate(
     curr_id: u32,
     memory_counter: &AtomicU32,
-    cbt: &mut CBT,
+    cbt: &CBT,
     bisector_command_buffer: &[AtomicU32],
     allocation_indices_buffer: &mut [[u32; 4]],
+    bisector_state_buffer: &mut [u8],
 ) {
     let command = bisector_command_buffer[curr_id as usize].load(Ordering::Relaxed);
 
-    let num_splits = command.count_ones();
-    let first_bit_index = memory_counter.fetch_add(num_splits, Ordering::Relaxed);
+    let num_allocations = command.count_ones() + 1;
+    let first_bit_index = memory_counter.fetch_add(num_allocations, Ordering::Relaxed);
 
-    let mut allocation_indices: [u32; 4] = [curr_id, u32::MAX, u32::MAX, u32::MAX];
+    let mut allocation_indices: [u32; 4] = [u32::MAX, u32::MAX, u32::MAX, u32::MAX];
 
-    for (i, bit_index) in (first_bit_index..(first_bit_index + num_splits)).enumerate() {
+    for (i, bit_index) in (first_bit_index..(first_bit_index + num_allocations)).enumerate() {
         let child_id = cbt.zero_bit_to_id(bit_index);
-        cbt.set_bit(child_id);
-        allocation_indices[i + 1] = child_id;
+        allocation_indices[i] = child_id;
     }
     allocation_indices_buffer[curr_id as usize] = allocation_indices;
+    // cleanup
+    bisector_state_buffer[curr_id as usize] = SPLIT;
 }
 
 const COMMAND_EDGE_LUT: [[[u8;
@@ -802,6 +856,10 @@ fn find_edge_type(curr_id: u32, neighbor_neighbors: [u32; 3]) -> usize {
     } else if neighbor_neighbors[PREV] == curr_id {
         PREV
     } else {
+        if neighbor_neighbors[TWIN] != curr_id {
+            println!("curr_id: {:?}", curr_id);
+            println!("neighbor_neighbors: {:?}", neighbor_neighbors);
+        }
         debug_assert!(neighbor_neighbors[TWIN] == curr_id);
         TWIN
     }
@@ -814,20 +872,20 @@ struct EdgeData {
     y: SplitEdge,
 }
 
-// TODO: Allocate memory
 pub fn update_pointers(
-    curr_index: u32,
+    curr_id: u32,
     neighbor_buffer: &mut [[u32; 3]],
     heap_id_buffer: &mut [u32],
     bisector_command_buffer: &[AtomicU32],
     allocation_indices_buffer: &[[u32; 4]],
+    cbt: &mut CBT,
 ) {
-    let curr_heapid = heap_id_buffer[curr_index as usize];
-    let curr_command = bisector_command_buffer[curr_index as usize].load(Ordering::Relaxed);
+    let curr_heapid = heap_id_buffer[curr_id as usize];
+    let curr_command = bisector_command_buffer[curr_id as usize].load(Ordering::Relaxed);
     debug_assert!(curr_command != NO_SPLIT);
-    let neighbors = neighbor_buffer[curr_index as usize];
+    let neighbors = neighbor_buffer[curr_id as usize];
 
-    let curr_allocation_indices = allocation_indices_buffer[curr_index as usize];
+    let curr_allocation_indices = allocation_indices_buffer[curr_id as usize];
 
     // iterate over EDGES of the parent bisector that is being split
     for (bisector_edge_idx, neighbor_index) in neighbors.into_iter().enumerate() {
@@ -847,12 +905,13 @@ pub fn update_pointers(
         if neighbor_index != u32::MAX {
             let neighbor_command =
                 bisector_command_buffer[neighbor_index as usize].load(Ordering::Relaxed);
-            let neighbor_edge =
-                find_edge_type(curr_index, neighbor_buffer[neighbor_index as usize]);
+            println!("neighbor_index: {:?}", neighbor_index);
+            println!("curr_neighbors: {:?}", neighbors);
+            let neighbor_edge = find_edge_type(curr_id, neighbor_buffer[neighbor_index as usize]);
             if neighbor_command == NO_SPLIT {
                 // non-split tris are not dispatched, so we update them as well
                 // neighbor_buffer[neighbor_index] == curr_index by construction
-                if curr_index != slot as u32 {
+                if curr_id != slot as u32 {
                     neighbor_buffer[neighbor_index as usize][neighbor_edge] = slot as u32;
                 }
                 neighbor_slot = neighbor_index;
@@ -942,6 +1001,12 @@ pub fn update_pointers(
         heap_id_buffer[curr_allocation_indices[2] as usize] = 4 * curr_heapid + 2;
         // RR
         heap_id_buffer[curr_allocation_indices[0] as usize] = 4 * curr_heapid + 3;
+    }
+    cbt.unset_bit(curr_id);
+    for i in curr_allocation_indices {
+        if i != u32::MAX {
+            cbt.set_bit(i);
+        }
     }
 }
 
@@ -1185,7 +1250,9 @@ impl PipelineData {
 
         // write split commands
         for i in 0..self.want_split_buffer_count.load(Ordering::Relaxed) {
+            // println!("loop i: {:?}", i);
             let curr_id = self.want_split_buffer[i as usize];
+            // println!("loop curr_id: {:?}", curr_id);
             split_element(
                 curr_id,
                 &self.neighbors_buffer[..],
@@ -1205,12 +1272,12 @@ impl PipelineData {
             allocate(
                 curr_id,
                 &self.allocation_counter,
-                &mut self.cbt,
+                &self.cbt,
                 &self.bisector_split_command_buffer[..],
                 &mut self.allocation_indices_buffer,
+                &mut self.bisector_state_buffer,
             );
         }
-        self.allocation_counter.store(0, Ordering::Relaxed);
 
         // split and update pointers
         for i in 0..self.splitting_buffer_count.load(Ordering::Relaxed) {
@@ -1221,6 +1288,7 @@ impl PipelineData {
                 &mut self.heapid_buffer,
                 &self.bisector_split_command_buffer[..],
                 &self.allocation_indices_buffer[..],
+                &mut self.cbt,
             );
         }
 
@@ -1264,5 +1332,21 @@ impl PipelineData {
                 &self.root_bisector_vertices[..],
             )
         }
+    }
+
+    pub fn reset(&mut self) {
+        self.splitting_buffer_count.store(0, Ordering::Relaxed);
+        self.allocation_counter.store(0, Ordering::Relaxed);
+        self.merging_bisector_count.store(0, Ordering::Relaxed);
+        self.want_merge_buffer_count.store(0, Ordering::Relaxed);
+        self.want_split_buffer_count.store(0, Ordering::Relaxed);
+
+        self.bisector_split_command_buffer = self
+            .bisector_split_command_buffer
+            .iter_mut()
+            .map(|_| AtomicU32::new(0))
+            .collect();
+
+        self.bisector_state_buffer = self.bisector_state_buffer.iter_mut().map(|_| 0).collect();
     }
 }
