@@ -25,6 +25,7 @@ v2p vertexMain(uint vid: SV_VertexID)
     v2p output;
     output.color = colors[vid % 3];
     float4 pos = float4(pushConst.positions[vid], 1);
+    pos.y = -pos.y;
     output.sv_position = pos;
 
     return output;

@@ -8,16 +8,17 @@ use ash::{
 };
 use dirt_jam::*;
 use glam::{Vec3, Vec3A};
+use std::ffi::c_void;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::{cmp::max, error::Error, io::Cursor, os::raw::c_char, u64};
 use winit::{
     application::ApplicationHandler,
-    event::WindowEvent,
+    event::{ElementState, KeyEvent, WindowEvent},
     event_loop::{ActiveEventLoop, EventLoop},
+    keyboard::Key,
     raw_window_handle::{HasDisplayHandle, HasWindowHandle},
     window::{Window, WindowId},
 };
-
-use std::sync::atomic::AtomicU32;
 
 pub fn record_submit_commandbuffer<F: FnOnce(&Device, vk::CommandBuffer)>(
     device: &Device,
@@ -92,6 +93,8 @@ struct State {
     window: Window,
     instance: ash::Instance,
     device: ash::Device,
+    setup_commands_reuse_fence: vk::Fence,
+    setup_command_buffer: vk::CommandBuffer,
     draw_command_buffers: [vk::CommandBuffer; 3],
     present_queue: vk::Queue,
     pipeline: vk::Pipeline,
@@ -113,7 +116,10 @@ struct State {
 
     vertex_buffer: AllocatedBuffer,
 
+    vertex_staging_buffer: AllocatedBuffer,
+    vertex_staging_buffer_ptr: *mut c_void,
     algorithm_data: PipelineData,
+    iteration_counter: u32,
 }
 
 impl State {
@@ -274,7 +280,7 @@ impl State {
                         .layer_count(1),
                 ],
             );
-            dev.cmd_draw(*cmdbuf, 6 * 3, 1, 0, 0);
+            dev.cmd_draw(*cmdbuf, self.algorithm_data.cbt.interior[0] * 3, 1, 0, 0);
 
             dev.cmd_end_rendering(*cmdbuf);
 
@@ -697,7 +703,7 @@ impl ApplicationHandler for App {
             let vertex_buffer_size =
                 (size_of::<[Vec3; 3]>() * algorithm_data.vertex_buffer.len()) as u64;
 
-            let staging_buffer = AllocatedBuffer::new(
+            let vertex_staging_buffer = AllocatedBuffer::new(
                 &device,
                 vertex_buffer_size,
                 device_memory_properties,
@@ -706,9 +712,9 @@ impl ApplicationHandler for App {
                 vk::MemoryPropertyFlags::HOST_VISIBLE,
             );
 
-            let staging_buffer_ptr = device
+            let vertex_staging_buffer_ptr = device
                 .map_memory(
-                    staging_buffer.allocation,
+                    vertex_staging_buffer.allocation,
                     0,
                     vertex_buffer_size,
                     vk::MemoryMapFlags::empty(),
@@ -716,12 +722,12 @@ impl ApplicationHandler for App {
                 .expect("Failed to map device memory.");
 
             let mut staging_buffer_slice = Align::new(
-                staging_buffer_ptr,
+                vertex_staging_buffer_ptr,
                 align_of::<f32>() as u64,
                 vertex_buffer_size,
             );
             staging_buffer_slice.copy_from_slice(algorithm_data.vertex_buffer.as_slice());
-            device.unmap_memory(staging_buffer.allocation);
+            // device.unmap_memory(vertex_staging_buffer.allocation);
 
             let vertex_buffer = AllocatedBuffer::new(
                 &device,
@@ -772,7 +778,7 @@ impl ApplicationHandler for App {
                     let vertex_copy = vk::BufferCopy::default().size(vertex_buffer_size);
                     device.cmd_copy_buffer(
                         setup_command_buffer,
-                        staging_buffer.buffer,
+                        vertex_staging_buffer.buffer,
                         vertex_buffer.buffer,
                         &[vertex_copy],
                     );
@@ -780,7 +786,7 @@ impl ApplicationHandler for App {
             );
 
             device.device_wait_idle().expect("Wait idle.");
-            staging_buffer.destroy(&device);
+            // vertex_staging_buffer.destroy(&device);
 
             let depth_image_view_info = vk::ImageViewCreateInfo::default()
                 .subresource_range(
@@ -894,6 +900,7 @@ impl ApplicationHandler for App {
                 device: device,
                 swapchain: swapchain,
                 swapchain_loader: swapchain_loader,
+                setup_command_buffer: setup_command_buffer,
                 draw_command_buffers: draw_command_buffers,
                 present_queue: present_queue,
                 present_image_views: present_image_views,
@@ -909,6 +916,10 @@ impl ApplicationHandler for App {
                 frame_pace_semaphore: frame_pace_semaphore,
                 vertex_buffer: vertex_buffer,
                 algorithm_data: algorithm_data,
+                iteration_counter: 0,
+                vertex_staging_buffer: vertex_staging_buffer,
+                vertex_staging_buffer_ptr: vertex_staging_buffer_ptr,
+                setup_commands_reuse_fence: setup_commands_reuse_fence,
             })
         }
     }
@@ -933,6 +944,75 @@ impl ApplicationHandler for App {
                 state.render();
                 state.window.request_redraw(); // this is how u do rendering loops in winit i guess
             }
+            WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        logical_key: key,
+                        state: ElementState::Pressed,
+                        ..
+                    },
+                ..
+            } => match key.as_ref() {
+                Key::Character("S") => {
+                    let split_slots = [1, 7, 9, 14, 16];
+                    if state.iteration_counter < split_slots.len() as u32 {
+                        let slot = split_slots[state.iteration_counter as usize];
+                        let leaf = state.algorithm_data.cbt.leaves[(slot / 32) as usize]
+                            .load(Ordering::Relaxed);
+                        println!("leaf: {:b}", leaf);
+                        debug_assert!(leaf & !(1 << (slot % 32)) != 0,);
+
+                        state
+                            .algorithm_data
+                            .want_split_buffer_count
+                            .fetch_add(1, Ordering::Relaxed);
+                        state.algorithm_data.want_split_buffer[0] = slot;
+                        state.algorithm_data.iterate();
+                        state.iteration_counter += 1;
+                        state.algorithm_data.reset();
+                        debug_assert!(
+                            state
+                                .algorithm_data
+                                .want_split_buffer_count
+                                .load(Ordering::Relaxed)
+                                == 0
+                        );
+                    }
+                    let vertex_buffer_size =
+                        (size_of::<[Vec3; 3]>() * state.algorithm_data.vertex_buffer.len()) as u64;
+                    unsafe {
+                        let mut staging_buffer_slice = Align::new(
+                            state.vertex_staging_buffer_ptr,
+                            align_of::<f32>() as u64,
+                            vertex_buffer_size,
+                        );
+                        staging_buffer_slice
+                            .copy_from_slice(state.algorithm_data.vertex_buffer.as_slice());
+                        // WARNING: THERES NO SYNCHRONIZATION HERE
+                        // initialization command buffer
+                        record_submit_commandbuffer(
+                            &state.device,
+                            state.setup_command_buffer,
+                            state.setup_commands_reuse_fence,
+                            state.present_queue,
+                            &[],
+                            &[],
+                            &[],
+                            |device, setup_command_buffer| {
+                                let vertex_copy =
+                                    vk::BufferCopy::default().size(vertex_buffer_size);
+                                device.cmd_copy_buffer(
+                                    setup_command_buffer,
+                                    state.vertex_staging_buffer.buffer,
+                                    state.vertex_buffer.buffer,
+                                    &[vertex_copy],
+                                );
+                            },
+                        );
+                    }
+                }
+                _ => (),
+            },
             _ => (),
         }
     }

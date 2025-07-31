@@ -264,309 +264,22 @@ impl CBT {
     }
 }
 
-const UNCHANGED_ELEMENT: u8 = 0;
-const SIMPLIFY: u8 = 1;
-const SPLIT: u8 = 2;
+pub const UNCHANGED_ELEMENT: u8 = 0;
+pub const SIMPLIFY: u8 = 1;
+pub const SPLIT: u8 = 2;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+pub const NO_SPLIT: u32 = 0;
+pub const CENTER_SPLIT: u32 = 1;
+pub const RIGHT_SPLIT: u32 = 1 << 1;
+pub const LEFT_SPLIT: u32 = 1 << 2;
+pub const RIGHT_DOUBLE_SPLIT: u32 = CENTER_SPLIT | RIGHT_SPLIT;
+pub const LEFT_DOUBLE_SPLIT: u32 = CENTER_SPLIT | LEFT_SPLIT;
+pub const TRIPLE_SPLIT: u32 = CENTER_SPLIT | RIGHT_SPLIT | LEFT_SPLIT;
+pub const INVALID_POINTER: u32 = u32::MAX;
 
-    #[test]
-    fn reduce1() {
-        let mut cbt = CBT::new(7);
-
-        // 0010
-        // 0004      0006
-        // 0001 0003 0002 0004
-        // 0010 0111 1001 1111
-
-        cbt.leaves[0] = AtomicU32::new(0b0010);
-        cbt.leaves[1] = AtomicU32::new(0b0111);
-        cbt.leaves[2] = AtomicU32::new(0b1001);
-        cbt.leaves[3] = AtomicU32::new(0b1111);
-
-        println!("leaves: {:?}", cbt.leaves);
-
-        cbt.reduce();
-        assert_eq!(cbt.interior, vec![10, 4, 6, 1, 3, 2, 4]);
-
-        assert_eq!(cbt.one_bit_to_id(0), 32 * 0 + 1);
-        assert_eq!(cbt.one_bit_to_id(1), 32 * 1 + 0);
-        assert_eq!(cbt.one_bit_to_id(2), 32 * 1 + 1);
-        assert_eq!(cbt.one_bit_to_id(3), 32 * 1 + 2);
-        assert_eq!(cbt.one_bit_to_id(4), 32 * 2 + 0);
-        assert_eq!(cbt.one_bit_to_id(5), 32 * 2 + 3);
-        assert_eq!(cbt.one_bit_to_id(6), 32 * 3 + 0);
-        assert_eq!(cbt.one_bit_to_id(7), 32 * 3 + 1);
-        assert_eq!(cbt.one_bit_to_id(8), 32 * 3 + 2);
-        assert_eq!(cbt.one_bit_to_id(9), 32 * 3 + 3);
-        assert_eq!(cbt.one_bit_to_id(10), u32::MAX);
-
-        for leaf in cbt.leaves.iter_mut() {
-            leaf.fetch_or(0xFFFF_FFF0, Ordering::Relaxed);
-        }
-
-        cbt.reduce();
-
-        assert_eq!(cbt.zero_bit_to_id(0), 32 * 0 + 0);
-        assert_eq!(cbt.zero_bit_to_id(1), 32 * 0 + 2);
-        assert_eq!(cbt.zero_bit_to_id(2), 32 * 0 + 3);
-
-        assert_eq!(cbt.zero_bit_to_id(3), 32 * 1 + 3);
-
-        assert_eq!(cbt.zero_bit_to_id(4), 32 * 2 + 1);
-        assert_eq!(cbt.zero_bit_to_id(5), 32 * 2 + 2);
-        assert_eq!(cbt.zero_bit_to_id(6), u32::MAX);
-    }
-
-    #[test]
-    fn reduce2() {
-        let mut cbt = CBT::new(8);
-
-        // 12
-        // 8                   4
-        // 4         4         1         3
-        // 3    1    2    2    0    1    2    1
-        // 1011 0001 0101 1010 0000 0100 0110 0001
-        cbt.leaves[0] = AtomicU32::new(0b1011);
-        cbt.leaves[1] = AtomicU32::new(0b0001);
-        cbt.leaves[2] = AtomicU32::new(0b0101);
-        cbt.leaves[3] = AtomicU32::new(0b1010);
-        cbt.leaves[4] = AtomicU32::new(0b0000);
-        cbt.leaves[5] = AtomicU32::new(0b0100);
-        cbt.leaves[6] = AtomicU32::new(0b0110);
-        cbt.leaves[7] = AtomicU32::new(0b0001);
-
-        println!("leaves: {:?}", cbt.leaves);
-
-        cbt.reduce();
-        assert_eq!(
-            cbt.interior,
-            vec![12, 8, 4, 4, 4, 1, 3, 3, 1, 2, 2, 0, 1, 2, 1]
-        );
-
-        // 1011
-        assert_eq!(cbt.one_bit_to_id(0), 32 * 0 + 0);
-        assert_eq!(cbt.one_bit_to_id(1), 32 * 0 + 1);
-        assert_eq!(cbt.one_bit_to_id(2), 32 * 0 + 3);
-        // 0001
-        assert_eq!(cbt.one_bit_to_id(3), 32 * 1 + 0);
-        // 0101
-        assert_eq!(cbt.one_bit_to_id(4), 32 * 2 + 0);
-        assert_eq!(cbt.one_bit_to_id(5), 32 * 2 + 2);
-        // 1010
-        assert_eq!(cbt.one_bit_to_id(6), 32 * 3 + 1);
-        assert_eq!(cbt.one_bit_to_id(7), 32 * 3 + 3);
-        // 0000
-        // 0100
-        assert_eq!(cbt.one_bit_to_id(8), 32 * 5 + 2);
-        // 0110
-        assert_eq!(cbt.one_bit_to_id(9), 32 * 6 + 1);
-        assert_eq!(cbt.one_bit_to_id(10), 32 * 6 + 2);
-        // 0001
-        assert_eq!(cbt.one_bit_to_id(11), 32 * 7 + 0);
-        // end
-        assert_eq!(cbt.one_bit_to_id(12), u32::MAX);
-
-        for leaf in cbt.leaves.iter_mut() {
-            leaf.fetch_or(0xFFFF_FFF0, Ordering::Relaxed);
-        }
-        cbt.reduce();
-        // 1011
-        assert_eq!(cbt.zero_bit_to_id(0), 32 * 0 + 2);
-        // 0001
-        assert_eq!(cbt.zero_bit_to_id(1), 32 * 1 + 1);
-        assert_eq!(cbt.zero_bit_to_id(2), 32 * 1 + 2);
-        assert_eq!(cbt.zero_bit_to_id(3), 32 * 1 + 3);
-        // 0101
-        assert_eq!(cbt.zero_bit_to_id(4), 32 * 2 + 1);
-        assert_eq!(cbt.zero_bit_to_id(5), 32 * 2 + 3);
-        // 1010
-        assert_eq!(cbt.zero_bit_to_id(6), 32 * 3 + 0);
-        assert_eq!(cbt.zero_bit_to_id(7), 32 * 3 + 2);
-        // 0000
-        assert_eq!(cbt.zero_bit_to_id(8), 32 * 4 + 0);
-        assert_eq!(cbt.zero_bit_to_id(9), 32 * 4 + 1);
-        assert_eq!(cbt.zero_bit_to_id(10), 32 * 4 + 2);
-        assert_eq!(cbt.zero_bit_to_id(11), 32 * 4 + 3);
-        // 0100
-        assert_eq!(cbt.zero_bit_to_id(12), 32 * 5 + 0);
-        assert_eq!(cbt.zero_bit_to_id(13), 32 * 5 + 1);
-        assert_eq!(cbt.zero_bit_to_id(14), 32 * 5 + 3);
-        // 0110
-        assert_eq!(cbt.zero_bit_to_id(15), 32 * 6 + 0);
-        assert_eq!(cbt.zero_bit_to_id(16), 32 * 6 + 3);
-        // 0001
-        assert_eq!(cbt.zero_bit_to_id(17), 32 * 7 + 1);
-        assert_eq!(cbt.zero_bit_to_id(18), 32 * 7 + 2);
-        assert_eq!(cbt.zero_bit_to_id(19), 32 * 7 + 3);
-        // end
-        assert_eq!(cbt.zero_bit_to_id(20), u32::MAX);
-    }
-
-    #[test]
-    fn test_iterate1() {
-        let halfedge_mesh = HalfedgeMesh {
-            verts: vec![
-                Vec3::new(1.0, 0.0, 0.0),
-                Vec3::new(0.0, 1.0, 0.0),
-                Vec3::new(-1.0, 0.0, 0.0),
-                Vec3::new(0.0, -1.0, 0.0),
-            ],
-            indices: vec![2, 0, 1, 0, 2, 3],
-            faces: vec![
-                Face {
-                    v0: 0,
-                    num_verts: 3,
-                },
-                Face {
-                    v0: 3,
-                    num_verts: 3,
-                },
-            ],
-            neighbors: vec![
-                [1, 2, 3],
-                [2, 0, u32::MAX],
-                [0, 1, u32::MAX],
-                [4, 5, 0],
-                [5, 3, u32::MAX],
-                [3, 4, u32::MAX],
-            ],
-        };
-        let mut pipeline_data = PipelineData::new(halfedge_mesh, 8);
-
-        assert_eq!(pipeline_data.cbt.leaves.len(), 8);
-        assert_eq!(
-            pipeline_data.cbt.leaves[0].load(Ordering::Relaxed),
-            0x0000_003F // there are 6 root bisectors
-        );
-        assert_eq!(pipeline_data.base_depth, 3);
-        assert_eq!(pipeline_data.heapid_buffer[0], 0b1000);
-        assert_eq!(pipeline_data.heapid_buffer[1], 0b1001);
-        assert_eq!(pipeline_data.heapid_buffer[2], 0b1010);
-        assert_eq!(pipeline_data.heapid_buffer[3], 0b1011);
-        assert_eq!(pipeline_data.heapid_buffer[4], 0b1100);
-        assert_eq!(pipeline_data.heapid_buffer[5], 0b1101);
-
-        // let's try to split the bisector 1
-        pipeline_data
-            .want_split_buffer_count
-            .fetch_add(1, Ordering::Relaxed);
-        pipeline_data.want_split_buffer[0] = 1; // bisector 1 wants to split
-
-        pipeline_data.iterate();
-
-        println!(
-            "bitfield: {:b}",
-            pipeline_data.cbt.leaves[0].load(Ordering::Relaxed)
-        );
-        assert_eq!(
-            pipeline_data.allocation_indices_buffer[1],
-            [6, 7, u32::MAX, u32::MAX]
-        );
-        assert_eq!(pipeline_data.cbt.interior[0], 7); // we added 1 more bisector
-        assert_eq!(pipeline_data.heapid_buffer[6], 0b1001_1);
-        assert_eq!(pipeline_data.heapid_buffer[7], 0b1001_0);
-        assert_eq!(pipeline_data.neighbors_buffer[0], [7, 2, 3]);
-        assert_eq!(pipeline_data.neighbors_buffer[2], [0, 6, u32::MAX]);
-        assert_eq!(pipeline_data.neighbors_buffer[3], [4, 5, 0]);
-        assert_eq!(pipeline_data.neighbors_buffer[4], [5, 3, u32::MAX]);
-        assert_eq!(pipeline_data.neighbors_buffer[5], [3, 4, u32::MAX]);
-        assert_eq!(pipeline_data.neighbors_buffer[6], [7, u32::MAX, 2]);
-        assert_eq!(pipeline_data.neighbors_buffer[7], [u32::MAX, 6, 0]);
-
-        println!("Segment 1 completed\n");
-        pipeline_data.reset();
-
-        pipeline_data
-            .want_split_buffer_count
-            .fetch_add(1, Ordering::Relaxed);
-        pipeline_data.want_split_buffer[0] = 7; // bisector 6 wants to split now
-
-        pipeline_data.iterate();
-
-        assert_eq!(pipeline_data.cbt.interior[0], 11);
-        assert_eq!(pipeline_data.heapid_buffer[1], 0b1001_01);
-        assert_eq!(pipeline_data.heapid_buffer[8], 0b1001_00);
-        assert_eq!(pipeline_data.heapid_buffer[9], 0b1000_11);
-        assert_eq!(pipeline_data.heapid_buffer[10], 0b1000_0);
-        assert_eq!(pipeline_data.heapid_buffer[11], 0b1000_10);
-        assert_eq!(pipeline_data.heapid_buffer[12], 0b1011_1);
-        assert_eq!(pipeline_data.heapid_buffer[13], 0b1011_0);
-
-        assert_eq!(pipeline_data.neighbors_buffer[2], [10, 6, u32::MAX]);
-        assert_eq!(pipeline_data.neighbors_buffer[4], [5, 12, u32::MAX]);
-        assert_eq!(pipeline_data.neighbors_buffer[5], [13, 4, u32::MAX]);
-        assert_eq!(pipeline_data.neighbors_buffer[6], [8, u32::MAX, 2]);
-        assert_eq!(pipeline_data.neighbors_buffer[1], [8, 11, u32::MAX]);
-        assert_eq!(pipeline_data.neighbors_buffer[8], [9, 1, 6]);
-        assert_eq!(pipeline_data.neighbors_buffer[9], [11, 8, 10]);
-        assert_eq!(pipeline_data.neighbors_buffer[10], [12, 9, 2]);
-        assert_eq!(pipeline_data.neighbors_buffer[11], [1, 9, 13]);
-        assert_eq!(pipeline_data.neighbors_buffer[12], [13, 10, 4]);
-        assert_eq!(pipeline_data.neighbors_buffer[13], [11, 12, 5]);
-
-        println!("Segment 2 completed\n");
-        pipeline_data.reset();
-
-        pipeline_data.bisector_state_buffer[1] = SIMPLIFY;
-        pipeline_data.bisector_state_buffer[8] = SIMPLIFY;
-        pipeline_data.bisector_state_buffer[9] = SIMPLIFY;
-        pipeline_data.bisector_state_buffer[11] = SIMPLIFY;
-
-        pipeline_data
-            .want_merge_buffer_count
-            .fetch_add(2, Ordering::Relaxed);
-        pipeline_data.want_merge_buffer[0] = 1;
-        pipeline_data.want_merge_buffer[1] = 9;
-
-        pipeline_data.iterate();
-
-        assert_eq!(pipeline_data.cbt.interior[0], 9);
-        assert_eq!(pipeline_data.heapid_buffer[1], 0b1001_0);
-        assert_eq!(pipeline_data.heapid_buffer[9], 0b1000_1);
-
-        assert_eq!(pipeline_data.neighbors_buffer[1], [u32::MAX, 6, 9]);
-        assert_eq!(pipeline_data.neighbors_buffer[6], [1, u32::MAX, 2]);
-        assert_eq!(pipeline_data.neighbors_buffer[9], [10, 13, 1]);
-        assert_eq!(pipeline_data.neighbors_buffer[10], [12, 9, 2]);
-        assert_eq!(pipeline_data.neighbors_buffer[13], [9, 12, 5]);
-
-        println!("Segment 3 completed\n");
-
-        pipeline_data.reset();
-
-        pipeline_data.bisector_state_buffer[1] = SIMPLIFY;
-        pipeline_data.bisector_state_buffer[6] = SIMPLIFY;
-
-        pipeline_data
-            .want_merge_buffer_count
-            .fetch_add(1, Ordering::Relaxed);
-        pipeline_data.want_merge_buffer[0] = 6; // enqueue ODD heapids for simplification
-
-        pipeline_data.iterate();
-        assert_eq!(pipeline_data.cbt.interior[0], 8);
-        assert_eq!(pipeline_data.heapid_buffer[6], 0b1001_);
-
-        assert_eq!(pipeline_data.neighbors_buffer[6], [2, 9, u32::MAX]);
-        assert_eq!(pipeline_data.neighbors_buffer[2], [10, 6, u32::MAX]);
-        assert_eq!(pipeline_data.neighbors_buffer[9], [10, 13, 6]);
-    }
-}
-
-const NO_SPLIT: u32 = 0;
-const CENTER_SPLIT: u32 = 1;
-const RIGHT_SPLIT: u32 = 1 << 1;
-const LEFT_SPLIT: u32 = 1 << 2;
-const RIGHT_DOUBLE_SPLIT: u32 = CENTER_SPLIT | RIGHT_SPLIT;
-const LEFT_DOUBLE_SPLIT: u32 = CENTER_SPLIT | LEFT_SPLIT;
-const TRIPLE_SPLIT: u32 = CENTER_SPLIT | RIGHT_SPLIT | LEFT_SPLIT;
-const INVALID_POINTER: u32 = u32::MAX;
-
-const NEXT: usize = 0;
-const PREV: usize = 1;
-const TWIN: usize = 2;
+pub const NEXT: usize = 0;
+pub const PREV: usize = 1;
+pub const TWIN: usize = 2;
 
 pub fn heap_id_depth(heapid: u32) -> u32 {
     find_msb(heapid)
@@ -730,6 +443,7 @@ pub fn heapid_to_vertices(
     // the most significant 1 is a "tag" that allows us to compute the length of the split code
     // root_bisector_index takes `base_level` bits
     // split_code takes up a number of bits equal to the number of tree edges from the bisector to its root bisector
+
     assert!(heapid != 0);
     let depth = heap_id_depth(heapid);
     let num_split_code_bits = depth - base_level;
@@ -740,11 +454,15 @@ pub fn heapid_to_vertices(
 
     let mut curr_bisector = root_bisectors[root_bisector_index as usize];
     let mut peak_idx: u32 = 2; // index of vertex that is the peak
-
-    for i in 0..(depth - base_level) {
+    if heapid == 0b1000_10 {
+        println!("depth: {:?}", depth);
+        println!("root_bisector_index: {:?}", root_bisector_index);
+        println!("split_code: {:b}", split_code);
+    }
+    for i in (0..(depth - base_level)).rev() {
         let bit = (split_code >> i) & 0b0000_0000_0000_0001;
 
-        let replacement_slot = if bit != 0 { peak_idx + 1 } else { peak_idx + 2 } % 3;
+        let replacement_slot = (if bit == 0 { peak_idx + 2 } else { peak_idx + 1 }) % 3;
         let refinement_edge = [
             curr_bisector[((peak_idx + 1) % 3) as usize],
             curr_bisector[((peak_idx + 2) % 3) as usize],
@@ -892,7 +610,11 @@ fn find_edge_type(curr_id: u32, neighbor_neighbors: [u32; 3]) -> usize {
     } else if neighbor_neighbors[PREV] == curr_id {
         PREV
     } else {
-        if neighbor_neighbors[TWIN] != curr_id {}
+        if neighbor_neighbors[TWIN] != curr_id {
+            println!("FUCK");
+            println!("curr_id: {:?}", curr_id);
+            println!("neighbor_neighbors: {:?}", neighbor_neighbors);
+        }
         debug_assert!(neighbor_neighbors[TWIN] == curr_id);
         TWIN
     }
@@ -997,8 +719,8 @@ pub fn update_pointers(
         heap_id_buffer[curr_allocation_indices[0] as usize] = 4 * curr_heapid + 3;
     } else if curr_command == LEFT_DOUBLE_SPLIT {
         link_siblings(
-            curr_allocation_indices[2],
             curr_allocation_indices[1],
+            curr_allocation_indices[2],
             neighbor_buffer,
         );
         neighbor_buffer[curr_allocation_indices[2] as usize][TWIN] = curr_allocation_indices[0];
@@ -1013,8 +735,8 @@ pub fn update_pointers(
     } else {
         debug_assert!(curr_command == TRIPLE_SPLIT);
         link_siblings(
-            curr_allocation_indices[3],
             curr_allocation_indices[1],
+            curr_allocation_indices[3],
             neighbor_buffer,
         );
         link_siblings(
@@ -1022,7 +744,7 @@ pub fn update_pointers(
             curr_allocation_indices[2],
             neighbor_buffer,
         );
-        neighbor_buffer[curr_allocation_indices[0] as usize][TWIN] = curr_allocation_indices[0];
+        neighbor_buffer[curr_allocation_indices[3] as usize][TWIN] = curr_allocation_indices[0];
         neighbor_buffer[curr_allocation_indices[0] as usize][TWIN] = curr_allocation_indices[3];
 
         // LL
@@ -1424,7 +1146,9 @@ impl PipelineData {
                 curr_heapid,
                 self.base_depth,
                 &self.root_bisector_vertices[..],
-            )
+            );
+            println!("i: {:?}", curr_id);
+            println!("vert: {:?}", self.vertex_buffer[i as usize]);
         }
     }
 
@@ -1442,5 +1166,420 @@ impl PipelineData {
             .collect();
 
         self.bisector_state_buffer = self.bisector_state_buffer.iter_mut().map(|_| 0).collect();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reduce1() {
+        let mut cbt = CBT::new(7);
+
+        // 0010
+        // 0004      0006
+        // 0001 0003 0002 0004
+        // 0010 0111 1001 1111
+
+        cbt.leaves[0] = AtomicU32::new(0b0010);
+        cbt.leaves[1] = AtomicU32::new(0b0111);
+        cbt.leaves[2] = AtomicU32::new(0b1001);
+        cbt.leaves[3] = AtomicU32::new(0b1111);
+
+        println!("leaves: {:?}", cbt.leaves);
+
+        cbt.reduce();
+        assert_eq!(cbt.interior, vec![10, 4, 6, 1, 3, 2, 4]);
+
+        assert_eq!(cbt.one_bit_to_id(0), 32 * 0 + 1);
+        assert_eq!(cbt.one_bit_to_id(1), 32 * 1 + 0);
+        assert_eq!(cbt.one_bit_to_id(2), 32 * 1 + 1);
+        assert_eq!(cbt.one_bit_to_id(3), 32 * 1 + 2);
+        assert_eq!(cbt.one_bit_to_id(4), 32 * 2 + 0);
+        assert_eq!(cbt.one_bit_to_id(5), 32 * 2 + 3);
+        assert_eq!(cbt.one_bit_to_id(6), 32 * 3 + 0);
+        assert_eq!(cbt.one_bit_to_id(7), 32 * 3 + 1);
+        assert_eq!(cbt.one_bit_to_id(8), 32 * 3 + 2);
+        assert_eq!(cbt.one_bit_to_id(9), 32 * 3 + 3);
+        assert_eq!(cbt.one_bit_to_id(10), u32::MAX);
+
+        for leaf in cbt.leaves.iter_mut() {
+            leaf.fetch_or(0xFFFF_FFF0, Ordering::Relaxed);
+        }
+
+        cbt.reduce();
+
+        assert_eq!(cbt.zero_bit_to_id(0), 32 * 0 + 0);
+        assert_eq!(cbt.zero_bit_to_id(1), 32 * 0 + 2);
+        assert_eq!(cbt.zero_bit_to_id(2), 32 * 0 + 3);
+
+        assert_eq!(cbt.zero_bit_to_id(3), 32 * 1 + 3);
+
+        assert_eq!(cbt.zero_bit_to_id(4), 32 * 2 + 1);
+        assert_eq!(cbt.zero_bit_to_id(5), 32 * 2 + 2);
+        assert_eq!(cbt.zero_bit_to_id(6), u32::MAX);
+    }
+
+    #[test]
+    fn reduce2() {
+        let mut cbt = CBT::new(8);
+
+        // 12
+        // 8                   4
+        // 4         4         1         3
+        // 3    1    2    2    0    1    2    1
+        // 1011 0001 0101 1010 0000 0100 0110 0001
+        cbt.leaves[0] = AtomicU32::new(0b1011);
+        cbt.leaves[1] = AtomicU32::new(0b0001);
+        cbt.leaves[2] = AtomicU32::new(0b0101);
+        cbt.leaves[3] = AtomicU32::new(0b1010);
+        cbt.leaves[4] = AtomicU32::new(0b0000);
+        cbt.leaves[5] = AtomicU32::new(0b0100);
+        cbt.leaves[6] = AtomicU32::new(0b0110);
+        cbt.leaves[7] = AtomicU32::new(0b0001);
+
+        println!("leaves: {:?}", cbt.leaves);
+
+        cbt.reduce();
+        assert_eq!(
+            cbt.interior,
+            vec![12, 8, 4, 4, 4, 1, 3, 3, 1, 2, 2, 0, 1, 2, 1]
+        );
+
+        // 1011
+        assert_eq!(cbt.one_bit_to_id(0), 32 * 0 + 0);
+        assert_eq!(cbt.one_bit_to_id(1), 32 * 0 + 1);
+        assert_eq!(cbt.one_bit_to_id(2), 32 * 0 + 3);
+        // 0001
+        assert_eq!(cbt.one_bit_to_id(3), 32 * 1 + 0);
+        // 0101
+        assert_eq!(cbt.one_bit_to_id(4), 32 * 2 + 0);
+        assert_eq!(cbt.one_bit_to_id(5), 32 * 2 + 2);
+        // 1010
+        assert_eq!(cbt.one_bit_to_id(6), 32 * 3 + 1);
+        assert_eq!(cbt.one_bit_to_id(7), 32 * 3 + 3);
+        // 0000
+        // 0100
+        assert_eq!(cbt.one_bit_to_id(8), 32 * 5 + 2);
+        // 0110
+        assert_eq!(cbt.one_bit_to_id(9), 32 * 6 + 1);
+        assert_eq!(cbt.one_bit_to_id(10), 32 * 6 + 2);
+        // 0001
+        assert_eq!(cbt.one_bit_to_id(11), 32 * 7 + 0);
+        // end
+        assert_eq!(cbt.one_bit_to_id(12), u32::MAX);
+
+        for leaf in cbt.leaves.iter_mut() {
+            leaf.fetch_or(0xFFFF_FFF0, Ordering::Relaxed);
+        }
+        cbt.reduce();
+        // 1011
+        assert_eq!(cbt.zero_bit_to_id(0), 32 * 0 + 2);
+        // 0001
+        assert_eq!(cbt.zero_bit_to_id(1), 32 * 1 + 1);
+        assert_eq!(cbt.zero_bit_to_id(2), 32 * 1 + 2);
+        assert_eq!(cbt.zero_bit_to_id(3), 32 * 1 + 3);
+        // 0101
+        assert_eq!(cbt.zero_bit_to_id(4), 32 * 2 + 1);
+        assert_eq!(cbt.zero_bit_to_id(5), 32 * 2 + 3);
+        // 1010
+        assert_eq!(cbt.zero_bit_to_id(6), 32 * 3 + 0);
+        assert_eq!(cbt.zero_bit_to_id(7), 32 * 3 + 2);
+        // 0000
+        assert_eq!(cbt.zero_bit_to_id(8), 32 * 4 + 0);
+        assert_eq!(cbt.zero_bit_to_id(9), 32 * 4 + 1);
+        assert_eq!(cbt.zero_bit_to_id(10), 32 * 4 + 2);
+        assert_eq!(cbt.zero_bit_to_id(11), 32 * 4 + 3);
+        // 0100
+        assert_eq!(cbt.zero_bit_to_id(12), 32 * 5 + 0);
+        assert_eq!(cbt.zero_bit_to_id(13), 32 * 5 + 1);
+        assert_eq!(cbt.zero_bit_to_id(14), 32 * 5 + 3);
+        // 0110
+        assert_eq!(cbt.zero_bit_to_id(15), 32 * 6 + 0);
+        assert_eq!(cbt.zero_bit_to_id(16), 32 * 6 + 3);
+        // 0001
+        assert_eq!(cbt.zero_bit_to_id(17), 32 * 7 + 1);
+        assert_eq!(cbt.zero_bit_to_id(18), 32 * 7 + 2);
+        assert_eq!(cbt.zero_bit_to_id(19), 32 * 7 + 3);
+        // end
+        assert_eq!(cbt.zero_bit_to_id(20), u32::MAX);
+    }
+
+    #[test]
+    fn test_iterate1() {
+        let halfedge_mesh = HalfedgeMesh {
+            verts: vec![
+                Vec3::new(1.0, 0.0, 0.0),
+                Vec3::new(0.0, 1.0, 0.0),
+                Vec3::new(-1.0, 0.0, 0.0),
+                Vec3::new(0.0, -1.0, 0.0),
+            ],
+            indices: vec![2, 0, 1, 0, 2, 3],
+            faces: vec![
+                Face {
+                    v0: 0,
+                    num_verts: 3,
+                },
+                Face {
+                    v0: 3,
+                    num_verts: 3,
+                },
+            ],
+            neighbors: vec![
+                [1, 2, 3],
+                [2, 0, u32::MAX],
+                [0, 1, u32::MAX],
+                [4, 5, 0],
+                [5, 3, u32::MAX],
+                [3, 4, u32::MAX],
+            ],
+        };
+        let mut pipeline_data = PipelineData::new(halfedge_mesh, 8);
+
+        assert_eq!(pipeline_data.cbt.leaves.len(), 8);
+        assert_eq!(
+            pipeline_data.cbt.leaves[0].load(Ordering::Relaxed),
+            0x0000_003F // there are 6 root bisectors
+        );
+        assert_eq!(pipeline_data.base_depth, 3);
+        assert_eq!(pipeline_data.heapid_buffer[0], 0b1000);
+        assert_eq!(pipeline_data.heapid_buffer[1], 0b1001);
+        assert_eq!(pipeline_data.heapid_buffer[2], 0b1010);
+        assert_eq!(pipeline_data.heapid_buffer[3], 0b1011);
+        assert_eq!(pipeline_data.heapid_buffer[4], 0b1100);
+        assert_eq!(pipeline_data.heapid_buffer[5], 0b1101);
+
+        // let's try to split the bisector 1
+        pipeline_data
+            .want_split_buffer_count
+            .fetch_add(1, Ordering::Relaxed);
+        pipeline_data.want_split_buffer[0] = 1; // bisector 1 wants to split
+
+        pipeline_data.iterate();
+
+        println!(
+            "bitfield: {:b}",
+            pipeline_data.cbt.leaves[0].load(Ordering::Relaxed)
+        );
+        assert_eq!(
+            pipeline_data.allocation_indices_buffer[1],
+            [6, 7, u32::MAX, u32::MAX]
+        );
+        assert_eq!(pipeline_data.cbt.interior[0], 7); // we added 1 more bisector
+        assert_eq!(pipeline_data.heapid_buffer[6], 0b1001_1);
+        assert_eq!(pipeline_data.heapid_buffer[7], 0b1001_0);
+        assert_eq!(pipeline_data.neighbors_buffer[0], [7, 2, 3]);
+        assert_eq!(pipeline_data.neighbors_buffer[2], [0, 6, u32::MAX]);
+        assert_eq!(pipeline_data.neighbors_buffer[3], [4, 5, 0]);
+        assert_eq!(pipeline_data.neighbors_buffer[4], [5, 3, u32::MAX]);
+        assert_eq!(pipeline_data.neighbors_buffer[5], [3, 4, u32::MAX]);
+        assert_eq!(pipeline_data.neighbors_buffer[6], [7, u32::MAX, 2]);
+        assert_eq!(pipeline_data.neighbors_buffer[7], [u32::MAX, 6, 0]);
+
+        println!("Segment 1 completed\n");
+        pipeline_data.reset();
+
+        pipeline_data
+            .want_split_buffer_count
+            .fetch_add(1, Ordering::Relaxed);
+        pipeline_data.want_split_buffer[0] = 7; // bisector 6 wants to split now
+
+        pipeline_data.iterate();
+
+        assert_eq!(pipeline_data.cbt.interior[0], 11);
+        assert_eq!(pipeline_data.heapid_buffer[1], 0b1001_01);
+        assert_eq!(pipeline_data.heapid_buffer[8], 0b1001_00);
+        assert_eq!(pipeline_data.heapid_buffer[9], 0b1000_11);
+        assert_eq!(pipeline_data.heapid_buffer[10], 0b1000_0);
+        assert_eq!(pipeline_data.heapid_buffer[11], 0b1000_10);
+        assert_eq!(pipeline_data.heapid_buffer[12], 0b1011_1);
+        assert_eq!(pipeline_data.heapid_buffer[13], 0b1011_0);
+
+        assert_eq!(pipeline_data.neighbors_buffer[2], [10, 6, u32::MAX]);
+        assert_eq!(pipeline_data.neighbors_buffer[4], [5, 12, u32::MAX]);
+        assert_eq!(pipeline_data.neighbors_buffer[5], [13, 4, u32::MAX]);
+        assert_eq!(pipeline_data.neighbors_buffer[6], [8, u32::MAX, 2]);
+        assert_eq!(pipeline_data.neighbors_buffer[1], [8, 11, u32::MAX]);
+        assert_eq!(pipeline_data.neighbors_buffer[8], [9, 1, 6]);
+        assert_eq!(pipeline_data.neighbors_buffer[9], [11, 8, 10]);
+        assert_eq!(pipeline_data.neighbors_buffer[10], [12, 9, 2]);
+        assert_eq!(pipeline_data.neighbors_buffer[11], [1, 9, 13]);
+        assert_eq!(pipeline_data.neighbors_buffer[12], [13, 10, 4]);
+        assert_eq!(pipeline_data.neighbors_buffer[13], [11, 12, 5]);
+
+        println!("Segment 2 completed\n");
+        pipeline_data.reset();
+
+        pipeline_data.bisector_state_buffer[1] = SIMPLIFY;
+        pipeline_data.bisector_state_buffer[8] = SIMPLIFY;
+        pipeline_data.bisector_state_buffer[9] = SIMPLIFY;
+        pipeline_data.bisector_state_buffer[11] = SIMPLIFY;
+
+        pipeline_data
+            .want_merge_buffer_count
+            .fetch_add(2, Ordering::Relaxed);
+        pipeline_data.want_merge_buffer[0] = 1;
+        pipeline_data.want_merge_buffer[1] = 9;
+
+        pipeline_data.iterate();
+
+        assert_eq!(pipeline_data.cbt.interior[0], 9);
+        assert_eq!(pipeline_data.heapid_buffer[1], 0b1001_0);
+        assert_eq!(pipeline_data.heapid_buffer[9], 0b1000_1);
+
+        assert_eq!(pipeline_data.neighbors_buffer[1], [u32::MAX, 6, 9]);
+        assert_eq!(pipeline_data.neighbors_buffer[6], [1, u32::MAX, 2]);
+        assert_eq!(pipeline_data.neighbors_buffer[9], [10, 13, 1]);
+        assert_eq!(pipeline_data.neighbors_buffer[10], [12, 9, 2]);
+        assert_eq!(pipeline_data.neighbors_buffer[13], [9, 12, 5]);
+
+        println!("Segment 3 completed\n");
+
+        pipeline_data.reset();
+
+        pipeline_data.bisector_state_buffer[1] = SIMPLIFY;
+        pipeline_data.bisector_state_buffer[6] = SIMPLIFY;
+
+        pipeline_data
+            .want_merge_buffer_count
+            .fetch_add(1, Ordering::Relaxed);
+        pipeline_data.want_merge_buffer[0] = 6; // enqueue ODD heapids for simplification
+
+        pipeline_data.iterate();
+        assert_eq!(pipeline_data.cbt.interior[0], 8);
+        assert_eq!(pipeline_data.heapid_buffer[6], 0b1001_);
+
+        assert_eq!(pipeline_data.neighbors_buffer[6], [2, 9, u32::MAX]);
+        assert_eq!(pipeline_data.neighbors_buffer[2], [10, 6, u32::MAX]);
+        assert_eq!(pipeline_data.neighbors_buffer[9], [10, 13, 6]);
+    }
+
+    #[test]
+    fn test_iterate2() {
+        let halfedge_mesh = HalfedgeMesh {
+            verts: vec![
+                Vec3::new(1.0, 0.0, 0.0),
+                Vec3::new(0.0, 1.0, 0.0),
+                Vec3::new(-1.0, 0.0, 0.0),
+                Vec3::new(0.0, -1.0, 0.0),
+            ],
+            indices: vec![2, 0, 1, 0, 2, 3],
+            faces: vec![
+                Face {
+                    v0: 0,
+                    num_verts: 3,
+                },
+                Face {
+                    v0: 3,
+                    num_verts: 3,
+                },
+            ],
+            neighbors: vec![
+                [1, 2, 3],
+                [2, 0, u32::MAX],
+                [0, 1, u32::MAX],
+                [4, 5, 0],
+                [5, 3, u32::MAX],
+                [3, 4, u32::MAX],
+            ],
+        };
+        let mut pipeline_data = PipelineData::new(halfedge_mesh, 8);
+
+        assert_eq!(pipeline_data.cbt.leaves.len(), 8);
+        assert_eq!(
+            pipeline_data.cbt.leaves[0].load(Ordering::Relaxed),
+            0x0000_003F // there are 6 root bisectors
+        );
+        assert_eq!(pipeline_data.base_depth, 3);
+        assert_eq!(pipeline_data.heapid_buffer[0], 0b1000);
+        assert_eq!(pipeline_data.heapid_buffer[1], 0b1001);
+        assert_eq!(pipeline_data.heapid_buffer[2], 0b1010);
+        assert_eq!(pipeline_data.heapid_buffer[3], 0b1011);
+        assert_eq!(pipeline_data.heapid_buffer[4], 0b1100);
+        assert_eq!(pipeline_data.heapid_buffer[5], 0b1101);
+
+        // let's try to split the bisector 1
+        pipeline_data
+            .want_split_buffer_count
+            .fetch_add(1, Ordering::Relaxed);
+        pipeline_data.want_split_buffer[0] = 1; // bisector 1 wants to split
+
+        pipeline_data.iterate();
+
+        println!(
+            "bitfield: {:b}",
+            pipeline_data.cbt.leaves[0].load(Ordering::Relaxed)
+        );
+        assert_eq!(
+            pipeline_data.allocation_indices_buffer[1],
+            [6, 7, u32::MAX, u32::MAX]
+        );
+        assert_eq!(pipeline_data.cbt.interior[0], 7); // we added 1 more bisector
+        assert_eq!(pipeline_data.heapid_buffer[6], 0b1001_1);
+        assert_eq!(pipeline_data.heapid_buffer[7], 0b1001_0);
+        assert_eq!(pipeline_data.neighbors_buffer[0], [7, 2, 3]);
+        assert_eq!(pipeline_data.neighbors_buffer[2], [0, 6, u32::MAX]);
+        assert_eq!(pipeline_data.neighbors_buffer[3], [4, 5, 0]);
+        assert_eq!(pipeline_data.neighbors_buffer[4], [5, 3, u32::MAX]);
+        assert_eq!(pipeline_data.neighbors_buffer[5], [3, 4, u32::MAX]);
+        assert_eq!(pipeline_data.neighbors_buffer[6], [7, u32::MAX, 2]);
+        assert_eq!(pipeline_data.neighbors_buffer[7], [u32::MAX, 6, 0]);
+
+        println!("Segment 1 completed\n");
+        pipeline_data.reset();
+
+        pipeline_data
+            .want_split_buffer_count
+            .fetch_add(1, Ordering::Relaxed);
+        pipeline_data.want_split_buffer[0] = 7; // bisector 6 wants to split now
+
+        pipeline_data.iterate();
+
+        assert_eq!(pipeline_data.cbt.interior[0], 11);
+        assert_eq!(pipeline_data.heapid_buffer[1], 0b1001_01);
+        assert_eq!(pipeline_data.heapid_buffer[8], 0b1001_00);
+        assert_eq!(pipeline_data.heapid_buffer[9], 0b1000_11);
+        assert_eq!(pipeline_data.heapid_buffer[10], 0b1000_0);
+        assert_eq!(pipeline_data.heapid_buffer[11], 0b1000_10);
+        assert_eq!(pipeline_data.heapid_buffer[12], 0b1011_1);
+        assert_eq!(pipeline_data.heapid_buffer[13], 0b1011_0);
+
+        assert_eq!(pipeline_data.neighbors_buffer[2], [10, 6, u32::MAX]);
+        assert_eq!(pipeline_data.neighbors_buffer[4], [5, 12, u32::MAX]);
+        assert_eq!(pipeline_data.neighbors_buffer[5], [13, 4, u32::MAX]);
+        assert_eq!(pipeline_data.neighbors_buffer[6], [8, u32::MAX, 2]);
+        assert_eq!(pipeline_data.neighbors_buffer[1], [8, 11, u32::MAX]);
+        assert_eq!(pipeline_data.neighbors_buffer[8], [9, 1, 6]);
+        assert_eq!(pipeline_data.neighbors_buffer[9], [11, 8, 10]);
+        assert_eq!(pipeline_data.neighbors_buffer[10], [12, 9, 2]);
+        assert_eq!(pipeline_data.neighbors_buffer[11], [1, 9, 13]);
+        assert_eq!(pipeline_data.neighbors_buffer[12], [13, 10, 4]);
+        assert_eq!(pipeline_data.neighbors_buffer[13], [11, 12, 5]);
+
+        println!("Segment 2 completed\n");
+        pipeline_data.reset();
+        pipeline_data.want_split_buffer[0] = 14; // bisector 6 wants to split now
+        pipeline_data
+            .want_split_buffer_count
+            .fetch_add(1, Ordering::Relaxed);
+        pipeline_data.iterate();
+
+        assert_eq!(pipeline_data.neighbors_buffer[0], [3, 15, 11]);
+        assert_eq!(pipeline_data.neighbors_buffer[1], [8, 11, u32::MAX]);
+        assert_eq!(pipeline_data.neighbors_buffer[3], [14, 0, 8]);
+        assert_eq!(pipeline_data.neighbors_buffer[4], [5, 12, u32::MAX]);
+        assert_eq!(pipeline_data.neighbors_buffer[5], [13, 4, u32::MAX]);
+        assert_eq!(pipeline_data.neighbors_buffer[6], [8, u32::MAX, 17]);
+        assert_eq!(pipeline_data.neighbors_buffer[7], [15, 18, 12]);
+        assert_eq!(pipeline_data.neighbors_buffer[8], [3, 1, 6]);
+        assert_eq!(pipeline_data.neighbors_buffer[11], [1, 0, 13]);
+        assert_eq!(pipeline_data.neighbors_buffer[12], [13, 7, 4]);
+        assert_eq!(pipeline_data.neighbors_buffer[13], [11, 12, 5]);
+        assert_eq!(pipeline_data.neighbors_buffer[14], [15, 3, 16]);
+        assert_eq!(pipeline_data.neighbors_buffer[15], [0, 14, 7]);
+        assert_eq!(pipeline_data.neighbors_buffer[16], [17, 18, 14]);
+        assert_eq!(pipeline_data.neighbors_buffer[17], [16, 6, u32::MAX]);
+        assert_eq!(pipeline_data.neighbors_buffer[18], [16, u32::MAX, 7]);
     }
 }
