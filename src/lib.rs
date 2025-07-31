@@ -1153,6 +1153,61 @@ pub fn merge(
     cbt.unset_bit(next_id);
 }
 
+#[repr(C)]
+struct PushConstants {
+    scene: vk::DeviceAddress,
+    dispatch_sizes: vk::DeviceAddress,
+}
+
+#[repr(C)]
+struct SceneDataGPU {
+    // written once at initialization
+    root_bisector_vertices: vk::DeviceAddress,
+    // our concurrent binary tree
+    // cbt: CBT,
+    cbt_entries: vk::DeviceAddress,
+
+    // classification stage
+    classification_buffer: vk::DeviceAddress,
+    bisector_state_buffer: vk::DeviceAddress,
+
+    // prepare split
+    bisector_split_command_buffer: vk::DeviceAddress,
+    neighbors_buffer: vk::DeviceAddress,
+    splitting_buffer: vk::DeviceAddress,
+    heapid_buffer: vk::DeviceAddress,
+
+    // allocate
+    allocation_indices_buffer: vk::DeviceAddress,
+
+    // split
+    want_split_buffer: vk::DeviceAddress,
+
+    // prepare merge
+    want_merge_buffer: vk::DeviceAddress,
+
+    // merge
+    merging_bisector_buffer: vk::DeviceAddress,
+
+    // draw
+    vertex_buffer: vk::DeviceAddress,
+
+    // integers
+    num_memory_blocks: u32,
+    base_depth: u32,
+    cbt_depth: u32,
+}
+
+#[repr(C)]
+struct DispatchSizeGPU {
+    remaining_memory_count: vk::DispatchIndirectCommand,
+    allocation_counter: vk::DispatchIndirectCommand,
+    want_split_buffer_count: vk::DispatchIndirectCommand,
+    splitting_buffer_count: vk::DispatchIndirectCommand,
+    want_merge_buffer_count: vk::DispatchIndirectCommand,
+    merging_bisector_count: vk::DispatchIndirectCommand,
+}
+
 struct PipelineData {
     // written once at initialization
     root_bisector_vertices: Vec<[Vec3; 3]>,

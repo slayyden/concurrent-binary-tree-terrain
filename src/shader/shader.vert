@@ -16,12 +16,12 @@ void main()
 {
     //const array of positions for the triangle
     /*
-                                const vec3 positions[3] = vec3[3](
-                                        vec3(1.f, 1.f, 0.5f),
-                                        vec3(-1.f, 1.f, 0.5f),
-                                        vec3(0.f, -1.f, 0.5f)
-                                    );
-                                */
+                                                    const vec3 positions[3] = vec3[3](
+                                                            vec3(1.f, 1.f, 0.5f),
+                                                            vec3(-1.f, 1.f, 0.5f),
+                                                            vec3(0.f, -1.f, 0.5f)
+                                                        );
+                                                    */
 
     //const array of colors for the triangle
     const vec3 colors[3] = vec3[3](
@@ -31,11 +31,11 @@ void main()
         );
 
     //output the position of each vertex
-    float positions = push_constants.positions;
+    float x = push_constants.positions.positions[gl_VertexIndex * 3];
+    float y = push_constants.positions.positions[gl_VertexIndex * 3 + 1];
+    float z = push_constants.positions.positions[gl_VertexIndex * 3 + 2];
     gl_Position = vec4(
-            positions[gl_VertexIndex * 3 + 0],
-            positions[gl_VertexIndex * 3 + 1],
-            positions[gl_VertexIndex * 3 + 2],
+            x, y, z,
             1.0f);
     out_color = colors[gl_VertexIndex];
 

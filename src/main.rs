@@ -651,10 +651,10 @@ impl ApplicationHandler for App {
             // ----------------------------------------------------------------
             // create buffers
             let vertex_positions = [
-                01., 1., 0.5, //v0
-                -1., 1., 0.5, //v1
-                0., -1., 0.5, //v2
-            ];
+                1., 0.0, 0.5, //v0
+                0., 1., 0.5, //v1
+                0., 0., 0.5, //v2
+            ] as [f32; 9];
             let vertex_buffer_size = (size_of::<f32>() * vertex_positions.len()) as u64;
 
             let staging_buffer = AllocatedBuffer::new(
