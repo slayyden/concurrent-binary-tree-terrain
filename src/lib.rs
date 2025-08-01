@@ -6,11 +6,20 @@ use std::{
 
 use glam::Vec3;
 
-use ash::vk;
+use ash::{Device, util::Align, vk};
 
 pub fn byteslice<T: Sized>(p: &T) -> &[u8] {
     unsafe {
         ::core::slice::from_raw_parts((p as *const T) as *const u8, ::core::mem::size_of::<T>())
+    }
+}
+
+pub fn cast_slice<T: Sized>(p: &[T]) -> &[u8] {
+    unsafe {
+        ::core::slice::from_raw_parts(
+            p.as_ptr() as *const u8,
+            ::core::mem::size_of::<T>() * p.len(),
+        )
     }
 }
 // finds the index of the device memory type that matches the memory requirements and flags
@@ -28,6 +37,59 @@ pub fn find_memorytype_index(
                 && memory_type.property_flags & flags == flags
         })
         .map(|(index, _memory_type)| index as u32)
+}
+
+pub fn record_submit_commandbuffer<F: FnOnce(&Device, vk::CommandBuffer)>(
+    device: &Device,
+    command_buffer: vk::CommandBuffer,
+    command_buffer_reuse_fence: vk::Fence,
+    submit_queue: vk::Queue,
+    wait_mask: &[vk::PipelineStageFlags],
+    wait_semaphores: &[vk::Semaphore],
+    signal_semaphores: &[vk::Semaphore],
+    f: F,
+) {
+    unsafe {
+        device
+            .wait_for_fences(&[command_buffer_reuse_fence], true, u64::MAX)
+            .expect("Wait for fence failed.");
+
+        device
+            .reset_fences(&[command_buffer_reuse_fence])
+            .expect("Reset fences failed");
+
+        device
+            .reset_command_buffer(
+                command_buffer,
+                vk::CommandBufferResetFlags::RELEASE_RESOURCES,
+            )
+            .expect("Reset command buffer failed.");
+
+        let command_buffer_begin_info = vk::CommandBufferBeginInfo::default()
+            .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+
+        device
+            .begin_command_buffer(command_buffer, &command_buffer_begin_info)
+            .expect("Begin commandbuffer.");
+
+        f(device, command_buffer);
+
+        device
+            .end_command_buffer(command_buffer)
+            .expect("End command buffer.");
+
+        let command_buffers = vec![command_buffer];
+
+        let submit_info = vk::SubmitInfo::default()
+            .wait_semaphores(wait_semaphores)
+            .wait_dst_stage_mask(wait_mask)
+            .command_buffers(&command_buffers)
+            .signal_semaphores(signal_semaphores);
+
+        device
+            .queue_submit(submit_queue, &[submit_info], command_buffer_reuse_fence)
+            .expect("Queue submit failed.");
+    }
 }
 pub struct AllocatedBuffer {
     pub buffer: vk::Buffer,
@@ -80,6 +142,77 @@ impl AllocatedBuffer {
         }
     }
 
+    pub fn new_with_data(
+        device: &ash::Device,
+        size: u64,
+        mem_props: vk::PhysicalDeviceMemoryProperties,
+        usage: vk::BufferUsageFlags,
+        sharing_mode: vk::SharingMode,
+        memory_type: vk::MemoryPropertyFlags,
+        command_buffer: vk::CommandBuffer,
+        command_buffer_reuse_fence: vk::Fence,
+        queue: vk::Queue,
+        data: &[u8],
+    ) -> Self {
+        let buffer = Self::new(device, size, mem_props, usage, sharing_mode, memory_type);
+
+        let staging_buffer = AllocatedBuffer::new(
+            &device,
+            data.len() as u64,
+            mem_props,
+            vk::BufferUsageFlags::TRANSFER_SRC,
+            vk::SharingMode::EXCLUSIVE,
+            vk::MemoryPropertyFlags::HOST_VISIBLE,
+        );
+        unsafe {
+            let staging_buffer_ptr = device
+                .map_memory(
+                    staging_buffer.allocation,
+                    0,
+                    data.len() as u64,
+                    vk::MemoryMapFlags::empty(),
+                )
+                .expect("Failed to map device memory.");
+            let mut staging_buffer_slice = Align::new(
+                staging_buffer_ptr,
+                align_of::<f32>() as u64,
+                data.len() as u64,
+            );
+            staging_buffer_slice.copy_from_slice(data);
+
+            record_submit_commandbuffer(
+                &device,
+                command_buffer,
+                command_buffer_reuse_fence,
+                queue,
+                &[],
+                &[],
+                &[],
+                |device, setup_command_buffer| {
+                    let copy_region = vk::BufferCopy::default().size(data.len() as u64);
+                    device.cmd_copy_buffer(
+                        command_buffer,
+                        staging_buffer.buffer,
+                        buffer.buffer,
+                        &[copy_region],
+                    );
+                },
+            );
+            device.device_wait_idle().expect("Wait idle.");
+        }
+        staging_buffer.destroy(device);
+
+        return buffer;
+    }
+
+    pub fn device_address(&self, device: &Device) -> vk::DeviceAddress {
+        unsafe {
+            device.get_buffer_device_address(
+                &vk::BufferDeviceAddressInfo::default().buffer(self.buffer),
+            )
+        }
+    }
+
     pub fn destroy(self, device: &ash::Device) {
         unsafe {
             device.free_memory(self.allocation, None);
@@ -94,7 +227,7 @@ pub struct CBT {
     pub leaves: Vec<AtomicU32>,
 }
 
-const BITFIELD_INT_SIZE: u32 = 32;
+pub const BITFIELD_INT_SIZE: u32 = 32;
 impl CBT {
     pub fn new(depth: u32) -> CBT {
         let bitfield_length = 1 << depth;
@@ -786,13 +919,6 @@ pub fn prepare_merge(
     }
     let next_neighbors = neighbor_buffer[next_id as usize];
 
-    // remove reference to next
-    if next_neighbors[TWIN] != u32::MAX {
-        let next_twin_neighbors = neighbor_buffer[next_neighbors[TWIN] as usize];
-        let edge_type = find_edge_type(next_id, next_twin_neighbors);
-        neighbor_buffer[next_neighbors[TWIN] as usize][edge_type] = curr_id;
-    }
-
     let mut num_pairs_to_merge = 1 as u32;
     // We need to identify our twin pair
     let twin_highid = next_neighbors[NEXT];
@@ -827,16 +953,14 @@ pub fn prepare_merge(
         if twin_low_bisector_state != SIMPLIFY || twin_high_bisector_state != SIMPLIFY {
             return;
         }
-        /*
-        // remove reference to twin_high
-        let twin_high_neighbors = neighbor_buffer[twin_highid as usize];
-
-        if twin_high_neighbors[TWIN] != u32::MAX {
-            let twin_high_twin_neighbors = neighbor_buffer[twin_high_neighbors[TWIN] as usize];
-            let edge_type = find_edge_type(twin_highid, twin_high_twin_neighbors);
-            neighbor_buffer[twin_high_neighbors[TWIN] as usize][edge_type] = twin_highid;
-        }*/
         num_pairs_to_merge = 2;
+    }
+
+    // remove reference to next
+    if next_neighbors[TWIN] != u32::MAX {
+        let next_twin_neighbors = neighbor_buffer[next_neighbors[TWIN] as usize];
+        let edge_type = find_edge_type(next_id, next_twin_neighbors);
+        neighbor_buffer[next_neighbors[TWIN] as usize][edge_type] = curr_id;
     }
 
     // enqueue 1 thread for each pair we need to merge
@@ -844,6 +968,15 @@ pub fn prepare_merge(
     simplification_buffer[base_slot as usize] = curr_id;
     if num_pairs_to_merge == 2 {
         simplification_buffer[(base_slot + 1) as usize] = twin_highid;
+
+        // remove reference to twin_low
+        let twin_low_neighbors = neighbor_buffer[twin_lowid as usize];
+
+        if twin_low_neighbors[TWIN] != u32::MAX {
+            let twin_low_twin_neighbors = neighbor_buffer[twin_low_neighbors[TWIN] as usize];
+            let edge_type = find_edge_type(twin_lowid, twin_low_twin_neighbors);
+            neighbor_buffer[twin_low_neighbors[TWIN] as usize][edge_type] = twin_highid;
+        }
     }
 }
 
@@ -873,58 +1006,86 @@ pub fn merge(
 }
 
 #[repr(C)]
-struct PushConstants {
-    scene: vk::DeviceAddress,
-    dispatch_sizes: vk::DeviceAddress,
-}
-
-#[repr(C)]
 pub struct SceneDataGPU {
     // written once at initialization
-    root_bisector_vertices: vk::DeviceAddress,
+    pub root_bisector_vertices: vk::DeviceAddress,
     // our concurrent binary tree
     // cbt: CBT,
-    cbt_entries: vk::DeviceAddress,
+    pub cbt_interior: vk::DeviceAddress,
+    pub cbt_leaves: vk::DeviceAddress,
 
     // classification stage
-    classification_buffer: vk::DeviceAddress,
-    bisector_state_buffer: vk::DeviceAddress,
+    pub classification_buffer: vk::DeviceAddress,
+    pub bisector_state_buffer: vk::DeviceAddress,
 
     // prepare split
-    bisector_split_command_buffer: vk::DeviceAddress,
-    neighbors_buffer: vk::DeviceAddress,
-    splitting_buffer: vk::DeviceAddress,
-    heapid_buffer: vk::DeviceAddress,
+    pub bisector_split_command_buffer: vk::DeviceAddress,
+    pub neighbors_buffer: vk::DeviceAddress,
+    pub splitting_buffer: vk::DeviceAddress,
+    pub heapid_buffer: vk::DeviceAddress,
 
     // allocate
-    allocation_indices_buffer: vk::DeviceAddress,
+    pub allocation_indices_buffer: vk::DeviceAddress,
 
     // split
-    want_split_buffer: vk::DeviceAddress,
+    pub want_split_buffer: vk::DeviceAddress,
 
     // prepare merge
-    want_merge_buffer: vk::DeviceAddress,
+    pub want_merge_buffer: vk::DeviceAddress,
 
     // merge
-    merging_bisector_buffer: vk::DeviceAddress,
+    pub merging_bisector_buffer: vk::DeviceAddress,
 
     // draw
-    vertex_buffer: vk::DeviceAddress,
+    pub vertex_buffer: vk::DeviceAddress,
 
     // integers
-    num_memory_blocks: u32,
-    base_depth: u32,
-    cbt_depth: u32,
+    pub num_memory_blocks: u32,
+    pub base_depth: u32,
+    pub cbt_depth: u32,
 }
 
+pub struct SceneDataBuffers {
+    // written once at initialization
+    pub root_bisector_vertices: AllocatedBuffer,
+    // our concurrent binary tree
+    // cbt: CBT,
+    pub cbt_interior: AllocatedBuffer,
+    pub cbt_leaves: AllocatedBuffer,
+
+    // classification stage
+    pub classification_buffer: AllocatedBuffer,
+    pub bisector_state_buffer: AllocatedBuffer,
+
+    // prepare split
+    pub bisector_split_command_buffer: AllocatedBuffer,
+    pub neighbors_buffer: AllocatedBuffer,
+    pub splitting_buffer: AllocatedBuffer,
+    pub heapid_buffer: AllocatedBuffer,
+
+    // allocate
+    pub allocation_indices_buffer: AllocatedBuffer,
+
+    // split
+    pub want_split_buffer: AllocatedBuffer,
+
+    // prepare merge
+    pub want_merge_buffer: AllocatedBuffer,
+
+    // merge
+    pub merging_bisector_buffer: AllocatedBuffer,
+
+    // draw
+    pub vertex_buffer: AllocatedBuffer,
+}
 #[repr(C)]
 pub struct DispatchSizeGPU {
-    remaining_memory_count: vk::DispatchIndirectCommand,
-    allocation_counter: vk::DispatchIndirectCommand,
-    want_split_buffer_count: vk::DispatchIndirectCommand,
-    splitting_buffer_count: vk::DispatchIndirectCommand,
-    want_merge_buffer_count: vk::DispatchIndirectCommand,
-    merging_bisector_count: vk::DispatchIndirectCommand,
+    pub remaining_memory_count: vk::DispatchIndirectCommand,
+    pub allocation_counter: vk::DispatchIndirectCommand,
+    pub want_split_buffer_count: vk::DispatchIndirectCommand,
+    pub splitting_buffer_count: vk::DispatchIndirectCommand,
+    pub want_merge_buffer_count: vk::DispatchIndirectCommand,
+    pub merging_bisector_count: vk::DispatchIndirectCommand,
 }
 
 pub struct PipelineData {
@@ -964,6 +1125,10 @@ pub struct PipelineData {
     pub merging_bisector_buffer: Vec<u32>,
 
     pub vertex_buffer: Vec<[Vec3; 3]>,
+}
+
+pub fn linear_dispatch(x: u32) -> vk::DispatchIndirectCommand {
+    vk::DispatchIndirectCommand { x: x, y: 0, z: 0 }
 }
 
 impl PipelineData {
