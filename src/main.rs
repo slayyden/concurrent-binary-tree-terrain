@@ -81,7 +81,7 @@ struct State {
     algorithm_data: PipelineData,
     iteration_counter: u32,
 
-    scene_buffer_handles: SceneDataBuffers,
+    scene_buffer_handles: SceneCPUHandles,
     scene_buffer: AllocatedBuffer,
     dispatch_buffer: AllocatedBuffer,
 }
@@ -925,7 +925,7 @@ impl ApplicationHandler for App {
             let new_buffer_sized =
                 |initial_data, usage| new_buffer(initial_data, initial_data.len() as u64, usage);
 
-            let scene_buffer_handles = SceneDataBuffers {
+            let scene_buffer_handles = SceneCPUHandles {
                 root_bisector_vertices: new_buffer_sized(
                     cast_slice(&algorithm_data.root_bisector_vertices),
                     vk::BufferUsageFlags::UNIFORM_BUFFER,
@@ -1069,6 +1069,8 @@ impl ApplicationHandler for App {
                 size_of::<DispatchSizeGPU>() as u64,
                 vk::BufferUsageFlags::STORAGE_BUFFER,
             );
+
+            let compute_pipeline = vk::ComputePipelineCreateInfo::default();
 
             self.state = Some(State {
                 window: window,

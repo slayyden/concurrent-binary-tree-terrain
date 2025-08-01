@@ -1045,7 +1045,7 @@ pub struct SceneDataGPU {
     pub cbt_depth: u32,
 }
 
-pub struct SceneDataBuffers {
+pub struct SceneCPUHandles {
     // written once at initialization
     pub root_bisector_vertices: AllocatedBuffer,
     // our concurrent binary tree
@@ -1054,6 +1054,7 @@ pub struct SceneDataBuffers {
     pub cbt_leaves: AllocatedBuffer,
 
     // classification stage
+    pub classification_pipeline: vk::Pipeline,
     pub classification_buffer: AllocatedBuffer,
     pub bisector_state_buffer: AllocatedBuffer,
 

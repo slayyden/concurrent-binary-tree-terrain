@@ -1,12 +1,4 @@
-struct PushConstant
-{
-    float4x4 view_project;
-    float3 *positions;
-    uint32_t *curr_id;
-}
-
-[[vk::push_constant]]
-ConstantBuffer<PushConstant> pushConst;
+#include "common.slang"
 
 // Vertex shader to pixel shader
 struct v2p
@@ -28,7 +20,7 @@ v2p vertexMain(uint vid: SV_VertexID)
     // float3 color = float3(0.0, 0.0, 0.0);
     // color[channel] = ((pushConst.curr_id[vid / 3] % 8) + 1) / 8.0;
     output.color = colors[vid % 3];
-    float4 pos = float4(pushConst.positions[vid], 1);
+    float4 pos = float4(pc.positions[vid], 1);
     pos.y = -pos.y;
     output.sv_position = pos;
 
