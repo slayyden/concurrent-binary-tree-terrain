@@ -1,7 +1,7 @@
 // use ash::Instance;
 use ash::{
     Device, Entry,
-    ext::debug_utils,
+    ext::{custom_border_color, debug_utils},
     khr::{surface, swapchain},
     util::{Align, read_spv},
     vk,
@@ -10,7 +10,13 @@ use dirt_jam::*;
 use glam::{Vec3, Vec3A};
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::{cmp::max, error::Error, io::Cursor, os::raw::c_char, u64};
+use std::{
+    cmp::{max, min},
+    error::Error,
+    io::Cursor,
+    os::raw::c_char,
+    u64,
+};
 use winit::{
     application::ApplicationHandler,
     event::{ElementState, KeyEvent, WindowEvent},
@@ -83,6 +89,7 @@ struct Vertex {
 struct PC {
     view_project: [f32; 16],
     positions: vk::DeviceAddress,
+    curr_ids: vk::DeviceAddress,
 }
 
 struct AtomicTest {
@@ -115,6 +122,9 @@ struct State {
     command_reuse_fences: [vk::Fence; 3],
 
     vertex_buffer: AllocatedBuffer,
+    curr_ids_buffer: AllocatedBuffer,
+    curr_ids_staging_buffer: AllocatedBuffer,
+    curr_ids_staging_buffer_ptr: *mut c_void,
 
     vertex_staging_buffer: AllocatedBuffer,
     vertex_staging_buffer_ptr: *mut c_void,
@@ -165,7 +175,7 @@ impl State {
             let color_attachments = [vk::RenderingAttachmentInfo::default()
                 .clear_value(vk::ClearValue {
                     color: vk::ClearColorValue {
-                        float32: [0.0, 1.0, 0.0, 1.0] as [f32; 4],
+                        float32: [0.0, 0.0, 0.0, 1.0] as [f32; 4],
                     },
                 })
                 .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
@@ -235,6 +245,9 @@ impl State {
                 positions: dev.get_buffer_device_address(
                     &vk::BufferDeviceAddressInfo::default().buffer(self.vertex_buffer.buffer),
                 ),
+                curr_ids: dev.get_buffer_device_address(
+                    &vk::BufferDeviceAddressInfo::default().buffer(self.curr_ids_buffer.buffer),
+                ),
             };
 
             // push constants
@@ -257,7 +270,7 @@ impl State {
                         .aspect_mask(vk::ImageAspectFlags::COLOR)
                         .clear_value(vk::ClearValue {
                             color: vk::ClearColorValue {
-                                float32: [0.0, 1.0, 0.0, 1.0],
+                                float32: [0.0, 0.0, 0.0, 1.0],
                             },
                         }),
                     vk::ClearAttachment::default()
@@ -740,6 +753,47 @@ impl ApplicationHandler for App {
                 vk::MemoryPropertyFlags::DEVICE_LOCAL,
             );
 
+            let curr_ids_buffer_size = (size_of::<u32>() * 64) as u64;
+
+            let curr_ids_staging_buffer = AllocatedBuffer::new(
+                &device,
+                curr_ids_buffer_size,
+                device_memory_properties,
+                vk::BufferUsageFlags::TRANSFER_SRC,
+                vk::SharingMode::EXCLUSIVE,
+                vk::MemoryPropertyFlags::HOST_VISIBLE,
+            );
+
+            let curr_ids_staging_buffer_ptr = device
+                .map_memory(
+                    curr_ids_staging_buffer.allocation,
+                    0,
+                    curr_ids_buffer_size,
+                    vk::MemoryMapFlags::empty(),
+                )
+                .expect("Failed to map device memory.");
+
+            let mut curr_ids_staging_buffer_slice = Align::new(
+                curr_ids_staging_buffer_ptr,
+                align_of::<u32>() as u64,
+                curr_ids_buffer_size,
+            );
+            let initial_staging_buffer: Vec<u32> = (0..algorithm_data.root_bisector_vertices.len())
+                .map(|x| x as u32)
+                .collect();
+            curr_ids_staging_buffer_slice.copy_from_slice(initial_staging_buffer.as_slice());
+
+            let curr_ids_buffer = AllocatedBuffer::new(
+                &device,
+                curr_ids_buffer_size,
+                device_memory_properties,
+                vk::BufferUsageFlags::TRANSFER_DST
+                    | vk::BufferUsageFlags::STORAGE_BUFFER
+                    | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
+                vk::SharingMode::EXCLUSIVE,
+                vk::MemoryPropertyFlags::DEVICE_LOCAL,
+            );
+
             // initialization command buffer
             record_submit_commandbuffer(
                 &device,
@@ -781,6 +835,14 @@ impl ApplicationHandler for App {
                         vertex_staging_buffer.buffer,
                         vertex_buffer.buffer,
                         &[vertex_copy],
+                    );
+
+                    let ids_copy = vk::BufferCopy::default().size(curr_ids_buffer_size);
+                    device.cmd_copy_buffer(
+                        setup_command_buffer,
+                        curr_ids_staging_buffer.buffer,
+                        curr_ids_buffer.buffer,
+                        &[ids_copy],
                     );
                 },
             );
@@ -915,6 +977,11 @@ impl ApplicationHandler for App {
                 command_reuse_fences: command_reuse_fences,
                 frame_pace_semaphore: frame_pace_semaphore,
                 vertex_buffer: vertex_buffer,
+
+                curr_ids_buffer: curr_ids_buffer,
+                curr_ids_staging_buffer: curr_ids_staging_buffer,
+                curr_ids_staging_buffer_ptr: curr_ids_staging_buffer_ptr,
+
                 algorithm_data: algorithm_data,
                 iteration_counter: 0,
                 vertex_staging_buffer: vertex_staging_buffer,
@@ -963,17 +1030,23 @@ impl ApplicationHandler for App {
                             state.iteration_counter % state.algorithm_data.cbt.interior[0],
                         ),
                         (state.algorithm_data.cbt.one_bit_to_id(
-                            state.iteration_counter + 1 % state.algorithm_data.cbt.interior[0],
+                            (state.iteration_counter + 1) % state.algorithm_data.cbt.interior[0],
                         )),
                         (state.algorithm_data.cbt.one_bit_to_id(
-                            state.iteration_counter + 2 % state.algorithm_data.cbt.interior[0],
+                            (state.iteration_counter + 2) % state.algorithm_data.cbt.interior[0],
                         )),
                         (state.algorithm_data.cbt.one_bit_to_id(
-                            state.iteration_counter + 3 % state.algorithm_data.cbt.interior[0],
+                            (state.iteration_counter + 3) % state.algorithm_data.cbt.interior[0],
                         )),
                     ];
+                    let slots: Vec<u32> = slots
+                        .into_iter()
+                        .filter(|x| {
+                            state.algorithm_data.heapid_buffer[*x as usize] & (1 << 31) == 0
+                        })
+                        .collect();
                     // println!("Refining tri and at slot {:?}", slot);
-                    for slot in slots {
+                    for slot in slots.iter() {
                         let leaf = state.algorithm_data.cbt.leaves[(slot / 32) as usize]
                             .load(Ordering::Relaxed);
                         // println!("Leaf: {:b}", leaf);
@@ -1028,6 +1101,102 @@ impl ApplicationHandler for App {
                                     &[vertex_copy],
                                 );
                             },
+                        );
+                    }
+                }
+                Key::Character("M") => {
+                    // let split_slots = [1, 7, 9, 14, 19];
+                    // let split_slots = [1, 7, 9, 14, 16];
+                    // if state.iteration_counter < split_slots.len() as u32 {
+                    // let slot = split_slots[state.iteration_counter as usize];
+                    let slots: Vec<u32> = (0..state.algorithm_data.cbt.interior[0])
+                        .map(|tid| state.algorithm_data.cbt.one_bit_to_id(tid))
+                        .filter(|slot_idx| {
+                            let heapid = state.algorithm_data.heapid_buffer[*slot_idx as usize];
+                            if heap_id_depth(heapid) == state.algorithm_data.base_depth {
+                                return false;
+                            }
+                            state.algorithm_data.bisector_state_buffer[*slot_idx as usize] =
+                                SIMPLIFY;
+                            if heapid % 2 != 1 {
+                                return false;
+                            }
+                            return true;
+                        })
+                        .collect();
+
+                    println!("num_slots: {:?}", slots.len());
+
+                    state
+                        .algorithm_data
+                        .want_merge_buffer_count
+                        .fetch_add(slots.len() as u32, Ordering::Relaxed);
+                    for (i, slot) in slots.iter().enumerate() {
+                        state.algorithm_data.want_merge_buffer[i] = *slot;
+                    }
+                    state.algorithm_data.iterate();
+                    state.iteration_counter += 1;
+                    state.algorithm_data.reset();
+                    let vertex_buffer_size =
+                        (size_of::<[Vec3; 3]>() * state.algorithm_data.vertex_buffer.len()) as u64;
+                    unsafe {
+                        let mut staging_buffer_slice = Align::new(
+                            state.vertex_staging_buffer_ptr,
+                            align_of::<f32>() as u64,
+                            vertex_buffer_size,
+                        );
+                        staging_buffer_slice
+                            .copy_from_slice(state.algorithm_data.vertex_buffer.as_slice());
+
+                        let ids_buffer_size = (64 * size_of::<u32>()) as u64;
+                        let mut staging_buffer_slice = Align::new(
+                            state.curr_ids_staging_buffer_ptr,
+                            align_of::<f32>() as u64,
+                            ids_buffer_size,
+                        );
+                        let curr_ids_buffer: Vec<u32> = (0..state.algorithm_data.cbt.interior[0])
+                            .map(|tid| min(state.algorithm_data.cbt.one_bit_to_id(tid), 64))
+                            .collect();
+                        println!("curr_ids_buffer: {:?}", curr_ids_buffer);
+                        staging_buffer_slice.copy_from_slice(curr_ids_buffer.as_slice());
+                        // WARNING: THERES NO SYNCHRONIZATION HERE
+                        // initialization command buffer
+                        record_submit_commandbuffer(
+                            &state.device,
+                            state.setup_command_buffer,
+                            state.setup_commands_reuse_fence,
+                            state.present_queue,
+                            &[],
+                            &[],
+                            &[],
+                            |device, setup_command_buffer| {
+                                let vertex_copy =
+                                    vk::BufferCopy::default().size(vertex_buffer_size);
+                                device.cmd_copy_buffer(
+                                    setup_command_buffer,
+                                    state.vertex_staging_buffer.buffer,
+                                    state.vertex_buffer.buffer,
+                                    &[vertex_copy],
+                                );
+
+                                let ids_copy = vk::BufferCopy::default().size(ids_buffer_size);
+                                device.cmd_copy_buffer(
+                                    setup_command_buffer,
+                                    state.curr_ids_staging_buffer.buffer,
+                                    state.curr_ids_buffer.buffer,
+                                    &[ids_copy],
+                                );
+                            },
+                        );
+                    }
+                }
+                Key::Character("N") => {
+                    for i in 0..state.algorithm_data.cbt.interior[0] {
+                        let curr_id = state.algorithm_data.cbt.one_bit_to_id(i);
+                        println!("curr_id : {:?}", curr_id);
+                        println!(
+                            "neighbors: {:?}",
+                            state.algorithm_data.neighbors_buffer[curr_id as usize]
                         );
                     }
                 }

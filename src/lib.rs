@@ -770,6 +770,7 @@ pub fn prepare_merge(
     simplification_buffer: &mut [u32],
 ) {
     // Get the bisector and heapid
+    println!("curr_id: {:?}", curr_id);
     let curr_heapid = heap_id_buffer[curr_id as usize]; // (garaunteed to be even)
     let curr_neighbors = neighbor_buffer[curr_id as usize];
     let curr_depth = heap_id_depth(curr_heapid);
@@ -800,7 +801,6 @@ pub fn prepare_merge(
         // Grab the two bisectors
         let twin_low_heapid = heap_id_buffer[twin_lowid as usize];
         let twin_high_heapid = heap_id_buffer[twin_highid as usize];
-        debug_assert!(twin_high_heapid > twin_low_heapid);
 
         // The current bisector is not the greatest element of the neighborhood, he will be handeled by twinLowBisect if needed
         if curr_heapid < twin_high_heapid {
@@ -815,6 +815,7 @@ pub fn prepare_merge(
         if twin_low_depth != curr_depth || twin_high_depth != curr_depth {
             return;
         }
+        debug_assert!(twin_high_heapid > twin_low_heapid);
 
         // Grab the two bisectors
         let twin_low_bisector_state = bisector_state_buffer[twin_lowid as usize];
@@ -826,7 +827,7 @@ pub fn prepare_merge(
         if twin_low_bisector_state != SIMPLIFY || twin_high_bisector_state != SIMPLIFY {
             return;
         }
-
+        /*
         // remove reference to twin_high
         let twin_high_neighbors = neighbor_buffer[twin_highid as usize];
 
@@ -834,7 +835,7 @@ pub fn prepare_merge(
             let twin_high_twin_neighbors = neighbor_buffer[twin_high_neighbors[TWIN] as usize];
             let edge_type = find_edge_type(twin_highid, twin_high_twin_neighbors);
             neighbor_buffer[twin_high_neighbors[TWIN] as usize][edge_type] = twin_highid;
-        }
+        }*/
         num_pairs_to_merge = 2;
     }
 
