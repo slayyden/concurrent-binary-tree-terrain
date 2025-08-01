@@ -1,5 +1,33 @@
 #include "cbt.slang"
 
+TriState classify_triangle(float3[3] verts, uint heapid)
+{
+    let normal = cross(verts[1] - verts[0], verts[2] - verts[1]);
+    if (dot(normal, pc.lookdir) > 0 - 10e-2)
+    {
+        return TriState::TOO_SMALL;
+    }
+    let tri_center = 0.3333 * (verts[0] + verts[1] + verts[2]);
+    let center_to_cam = tri_center - pc.cam_pos;
+    let center_to_cam_normalized = normalize(center_to_cam);
+    let dist_to_cam = length(center_to_cam);
+
+    // a is proportional to the screen area
+    let a = dot(center_to_cam_normalized, normal) / dist_to_cam;
+    if (a > 0.1 && (heapid & (1 << 31)) == 0)
+    {
+        return TriState::BISECT_ELEMENT;
+    }
+
+    if (a < 0.01 && heap_id_depth(heapid) != pc.scene.base_depth)
+    {
+        return TriState::SIMPLIFY_ELEMENT;
+    }
+
+    return TriState::UNCHANGED_ELEMENT;
+}
+
+[shader("compute")]
 void classify(uint3 tid: SV_DispatchThreadID)
 {
     if (tid.x >= pc.scene.cbt_interior[0])
@@ -9,16 +37,27 @@ void classify(uint3 tid: SV_DispatchThreadID)
 
     let curr_id = one_bit_to_id(tid.x);
     let heap_id = pc.scene.heapid_buffer[curr_id];
+    // Reset some values
+    pc.scene.bisector_split_command_buffer[curr_id] = NO_SPLIT;
+    // pc.scene.bisector_state_buffer[curr_id] = TriState::;
+
     float3 verts[3] = {
         pc.scene.vertex_buffer[curr_id * 3],
         pc.scene.vertex_buffer[curr_id * 3 + 1],
         pc.scene.vertex_buffer[curr_id * 3 + 2],
     };
 
-    let average_position = 0.3333 * (verts[0] + verts[1] + verts[2]);
-    if (dot(average_position, average_position) < 0.5 && (heap_id & (1 << 31)) == 0)
+    let state = classify_triangle(verts, heap_id);
+    pc.scene.bisector_state_buffer[curr_id] = state;
+
+    if (state == TriState::BISECT_ELEMENT)
     {
         let bisector_slot = pc.dispatch.want_split_buffer_count.add(1);
-        pc.scene.bisector_split_command_buffer[bisector_slot] = curr_id;
+        pc.scene.want_split_buffer[bisector_slot] = curr_id;
+    }
+    else if (state == TriState::SIMPLIFY_ELEMENT)
+    {
+        let bisector_slot = pc.dispatch.want_merge_buffer_count.add(1);
+        pc.scene.want_merge_buffer[bisector_slot] = curr_id;
     }
 }

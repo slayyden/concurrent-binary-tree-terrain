@@ -5,7 +5,7 @@ void allocate(
     uint3 threadId: SV_DispatchThreadID)
 {
     let tid = threadId.x;
-    if (tid >= pc.dispatch.splitting_buffer_count.x)
+    if (tid >= pc.dispatch.splitting_buffer_count.load())
     {
         return;
     }
@@ -25,7 +25,5 @@ void allocate(
         allocation_indices[i] = child_id;
     }
     pc.scene.allocation_indices_buffer[curr_id] = allocation_indices;
-    // cleanup
-    pc.scene.bisector_state_buffer[curr_id] = SPLIT;
 }
 

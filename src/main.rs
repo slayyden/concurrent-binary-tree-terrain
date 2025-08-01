@@ -7,7 +7,7 @@ use ash::{
     vk::{self, PipelineCreateFlags, PipelineShaderStageCreateFlags, ShaderStageFlags},
 };
 use dirt_jam::*;
-use glam::{Mat4, Vec3};
+use glam::{Mat4, Vec3, Vec3A};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::{
     cmp::{max, min},
@@ -41,6 +41,9 @@ struct PushConstants {
 
     scene: vk::DeviceAddress,
     dispatch: vk::DeviceAddress,
+
+    camera_position: Vec3A,
+    lookdir: Vec3A,
 }
 
 struct AtomicTest {
@@ -208,6 +211,9 @@ impl State {
                 dispatch: dev.get_buffer_device_address(
                     &vk::BufferDeviceAddressInfo::default().buffer(self.dispatch_buffer.buffer),
                 ),
+
+                camera_position: Vec3A::from(self.camera.pos),
+                lookdir: Vec3A::from(self.camera.lookdir()),
             };
 
             // push constants

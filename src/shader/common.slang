@@ -9,7 +9,7 @@ struct SceneData
 
     // classification stage
     uint *classification_buffer;
-    uint *bisector_state_buffer;
+    TriState *bisector_state_buffer;
 
     // prepare split
     uint *bisector_split_command_buffer;
@@ -37,7 +37,7 @@ struct SceneData
     uint base_depth;
     uint cbt_depth;
 }
-
+// TODO: UPDATE RUST SIDE PLEASE PLEASE PLEASE
 struct DispatchData
 {
     Atomic<uint> remaining_memory_count;
@@ -46,10 +46,16 @@ struct DispatchData
     uint2 pad1;
     Atomic<uint> want_split_buffer_count;
     uint2 pad3;
-    uint3 splitting_buffer_count;
-    uint3 want_merge_buffer_count;
+    Atomic<uint> splitting_buffer_count;
+    uint2 pad5;
+    Atomic<uint> want_merge_buffer_count;
+    uint2 pad4;
     Atomic<uint> merging_bisector_count;
     uint2 pad2;
+    uint num_allocated_blocks;
+    uint2 pad7;
+    Atomic<uint> vertex_buffer_count;
+    uint2 pad6;
 }
 
 struct PushConstant
@@ -59,6 +65,8 @@ struct PushConstant
     uint32_t *curr_id;
     SceneData *scene;
     DispatchData *dispatch;
+    float3 cam_pos;
+    float3 lookdir;
 }
 
 static const uint BITFIELD_INT_SIZE = 32;
@@ -81,6 +89,16 @@ static const uint TRIPLE_SPLIT = CENTER_SPLIT | RIGHT_SPLIT | LEFT_SPLIT;
 static const uint NEXT = 0;
 static const uint PREV = 1;
 static const uint TWIN = 2;
+
+enum TriState : int
+{
+    BACK_FACE_CULLED = -3,
+    FRUSTUM_CULLED = -2,
+    TOO_SMALL = -1,
+    UNCHANGED_ELEMENT = 0,
+    BISECT_ELEMENT = 1,
+    SIMPLIFY_ELEMENT = 2,
+}
 
 [[vk::push_constant]]
 ConstantBuffer<PushConstant> pc;

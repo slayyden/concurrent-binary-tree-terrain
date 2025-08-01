@@ -20,7 +20,7 @@ void prepare_merge(
     uint next_id = curr_neighbors[NEXT];
     uint next_heapid = heap_id_buffer[next_id];
     uint next_depth = heap_id_depth(next_heapid);
-    uint next_state = bisector_state_buffer[next_id];
+    TriState next_state = bisector_state_buffer[next_id];
 
     if (next_depth != curr_depth || next_state != SIMPLIFY)
     {
@@ -51,10 +51,10 @@ void prepare_merge(
             return;
         }
 
-        uint twin_low_state = bisector_state_buffer[twin_lowid];
-        uint twin_high_state = bisector_state_buffer[twin_highid];
+        TriState twin_low_state = bisector_state_buffer[twin_lowid];
+        TriState twin_high_state = bisector_state_buffer[twin_highid];
 
-        if (twin_low_state != SIMPLIFY || twin_high_state != SIMPLIFY)
+        if (twin_low_state != TriState::SIMPLIFY_ELEMENT || twin_high_state != TriState::SIMPLIFY_ELEMENT)
         {
             return;
         }

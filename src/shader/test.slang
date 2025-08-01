@@ -23,7 +23,7 @@ v2p vertexMain(uint vid: SV_VertexID)
     float4 pos = float4(pc.positions[vid], 1);
     pos.y = -pos.y;
     // pos = mul(pos, pc.view_project);
-    pos = mul(pc.view_project, pos);
+    pos = mul(pos, pc.view_project);
     // output.sv_position = mul(pos, pc.view_project);
     output.sv_position = pos;
 

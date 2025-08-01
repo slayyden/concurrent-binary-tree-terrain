@@ -1,13 +1,12 @@
-#include "common.slang"
+#include "cbt.slang"
 float3[3] heapid_to_vertices(
-    uint heapid,
-    uint base_level, )
+    uint heapid, )
 {
     // heapid: 0b000...01 root_bisector_index split_code
     // the most significant 1 is a "tag" that allows us to compute the length of the split code
     // root_bisector_index takes `base_level` bits
     // split_code takes up a number of bits equal to the number of tree edges from the bisector to its root bisector
-
+    let base_level = pc.scene.base_depth;
     let root_bisector_vertices = pc.scene.root_bisector_vertices;
     let depth = heap_id_depth(heapid);
     let num_split_code_bits = depth - base_level;
@@ -36,3 +35,21 @@ float3[3] heapid_to_vertices(
     return curr_bisector;
 }
 
+void write_vertex_buffer(uint3 tid: SV_DispatchThreadID)
+{
+    if (tid.x >= pc.scene.cbt_interior[0])
+    {
+        return;
+    }
+
+    let curr_id = one_bit_to_id(tid.x);
+    let heapid = pc.scene.heapid_buffer[curr_id];
+    let vertices_slot = pc.dispatch.vertex_buffer_count.add(1);
+    let triangle = heapid_to_vertices(heapid);
+
+    // displace verts here
+
+    pc.scene.vertex_buffer[vertices_slot * 3] = triangle[0];
+    pc.scene.vertex_buffer[vertices_slot * 3 + 1] = triangle[1];
+    pc.scene.vertex_buffer[vertices_slot * 3 + 2] = triangle[2];
+}

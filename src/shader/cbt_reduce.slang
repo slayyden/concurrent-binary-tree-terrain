@@ -26,5 +26,10 @@ void reduce(uint3 threadId: SV_DispatchThreadID)
         }
         GroupMemoryBarrierWithGroupSync();
     }
+
+    if (tid.x == 0)
+    {
+        pc.dispatch.num_allocated_blocks = scene.cbt_interior[0];
+    }
 }
 
