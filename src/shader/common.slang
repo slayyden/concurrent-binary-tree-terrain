@@ -44,7 +44,8 @@ struct DispatchData
     uint2 pad0;
     Atomic<uint> allocation_counter;
     uint2 pad1;
-    uint3 want_split_buffer_count;
+    Atomic<uint> want_split_buffer_count;
+    uint2 pad3;
     uint3 splitting_buffer_count;
     uint3 want_merge_buffer_count;
     Atomic<uint> merging_bisector_count;

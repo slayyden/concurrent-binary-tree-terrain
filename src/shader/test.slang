@@ -22,6 +22,9 @@ v2p vertexMain(uint vid: SV_VertexID)
     output.color = colors[vid % 3];
     float4 pos = float4(pc.positions[vid], 1);
     pos.y = -pos.y;
+    // pos = mul(pos, pc.view_project);
+    pos = mul(pc.view_project, pos);
+    // output.sv_position = mul(pos, pc.view_project);
     output.sv_position = pos;
 
     return output;

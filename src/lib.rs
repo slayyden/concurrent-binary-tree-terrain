@@ -4,7 +4,7 @@ use std::{
     u32,
 };
 
-use glam::Vec3;
+use glam::{Mat4, Vec2, Vec3, Vec4};
 
 use ash::{Device, util::Align, vk};
 
@@ -1054,7 +1054,7 @@ pub struct SceneCPUHandles {
     pub cbt_leaves: AllocatedBuffer,
 
     // classification stage
-    pub classification_pipeline: vk::Pipeline,
+    // pub classification_pipeline: vk::Pipeline,
     pub classification_buffer: AllocatedBuffer,
     pub bisector_state_buffer: AllocatedBuffer,
 
@@ -1078,6 +1078,13 @@ pub struct SceneCPUHandles {
 
     // draw
     pub vertex_buffer: AllocatedBuffer,
+
+    pub allocate_pipeline: vk::Pipeline,
+    pub reduce_pipeline: vk::Pipeline,
+    pub split_element_pipeline: vk::Pipeline,
+    pub update_pointers_pipeline: vk::Pipeline,
+    pub prepare_merge_pipeline: vk::Pipeline,
+    pub merge_pipeline: vk::Pipeline,
 }
 #[repr(C)]
 pub struct DispatchSizeGPU {
@@ -1326,6 +1333,29 @@ impl PipelineData {
             .collect();
 
         self.bisector_state_buffer = self.bisector_state_buffer.iter_mut().map(|_| 0).collect();
+    }
+}
+
+pub struct CameraState {
+    pub pos: Vec3,
+    // pitch (0, pi)
+    pub pitch: f32,
+    // yaw (-pi, pi)
+    pub yaw: f32,
+}
+
+impl CameraState {
+    pub fn lookdir(&self) -> Vec3 {
+        let down = Vec4::new(0.0, 0.0, -1.0, 1.0);
+        let pitched = Mat4::from_rotation_x(self.pitch) * down;
+        let yawed = Mat4::from_rotation_z(self.yaw) * pitched;
+        return Vec3::new(yawed.x, yawed.y, yawed.z);
+        // return Vec3::new(0.0, 1.0, 0.0);
+        // return -self.pos;
+    }
+    pub fn view_matrix(&self) -> Mat4 {
+        let dir = self.lookdir();
+        Mat4::look_to_rh(self.pos, dir, Vec3::new(0.0, 0.0, 1.0))
     }
 }
 

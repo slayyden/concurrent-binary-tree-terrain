@@ -4,22 +4,23 @@ use ash::{
     ext::{custom_border_color, debug_utils},
     khr::{surface, swapchain},
     util::{Align, read_spv},
-    vk,
+    vk::{self, PipelineCreateFlags, PipelineShaderStageCreateFlags, ShaderStageFlags},
 };
 use dirt_jam::*;
 use glam::{Mat4, Vec3};
-use std::ffi::c_void;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::{
     cmp::{max, min},
     error::Error,
+    ffi::CStr,
     io::Cursor,
     os::raw::c_char,
     u64,
 };
+use std::{f32::consts::PI, ffi::c_void};
 use winit::{
     application::ApplicationHandler,
-    event::{ElementState, KeyEvent, WindowEvent},
+    event::{DeviceEvent, ElementState, KeyEvent, WindowEvent},
     event_loop::{ActiveEventLoop, EventLoop},
     keyboard::Key,
     raw_window_handle::{HasDisplayHandle, HasWindowHandle},
@@ -33,7 +34,7 @@ struct Vertex {
 }
 
 #[repr(C)]
-struct PC {
+struct PushConstants {
     view_project: Mat4,
     positions: vk::DeviceAddress,
     curr_ids: vk::DeviceAddress,
@@ -84,6 +85,8 @@ struct State {
     scene_buffer_handles: SceneCPUHandles,
     scene_buffer: AllocatedBuffer,
     dispatch_buffer: AllocatedBuffer,
+
+    camera: CameraState,
 }
 
 impl State {
@@ -140,7 +143,7 @@ impl State {
                 .image_layout(vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL)
                 .clear_value(vk::ClearValue {
                     depth_stencil: vk::ClearDepthStencilValue {
-                        depth: 0.0,
+                        depth: 1.0,
                         stencil: 0,
                     },
                 });
@@ -189,8 +192,9 @@ impl State {
 
             dev.cmd_begin_rendering(*cmdbuf, &rendering_info);
 
-            let push_constants = PC {
-                view_project: Mat4::IDENTITY,
+            let push_constants = PushConstants {
+                view_project: Mat4::perspective_rh(PI / 2.0, 16.0 / 9.0, 0.01, 100.0)
+                    * self.camera.view_matrix(),
                 positions: dev.get_buffer_device_address(
                     &vk::BufferDeviceAddressInfo::default().buffer(self.vertex_buffer.buffer),
                 ),
@@ -210,7 +214,7 @@ impl State {
             dev.cmd_push_constants(
                 *cmdbuf,
                 self.pipeline_layout,
-                vk::ShaderStageFlags::VERTEX,
+                vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::COMPUTE,
                 0,
                 byteslice(&push_constants),
             );
@@ -446,7 +450,8 @@ impl ApplicationHandler for App {
                 vk::PhysicalDeviceVulkan11Features::default().shader_draw_parameters(true);
             let mut vulkan_12_features = vk::PhysicalDeviceVulkan12Features::default()
                 .buffer_device_address(true)
-                .timeline_semaphore(true);
+                .timeline_semaphore(true)
+                .scalar_block_layout(true);
             let mut vulkan_13_features =
                 vk::PhysicalDeviceVulkan13Features::default().dynamic_rendering(true);
             let device_create_info = vk::DeviceCreateInfo::default()
@@ -634,10 +639,10 @@ impl ApplicationHandler for App {
 
             let halfedge_mesh = HalfedgeMesh {
                 verts: vec![
-                    Vec3::new(1.0, 0.0, 0.5),
-                    Vec3::new(0.0, 1.0, 0.5),
-                    Vec3::new(-1.0, 0.0, 0.5),
-                    Vec3::new(0.0, -1.0, 0.5),
+                    Vec3::new(1.0, 0.0, 1.0),
+                    Vec3::new(0.0, 1.0, 1.0),
+                    Vec3::new(-1.0, 0.0, 1.0),
+                    Vec3::new(0.0, -1.0, 1.0),
                 ],
                 indices: vec![2, 0, 1, 0, 2, 3],
                 faces: vec![
@@ -830,9 +835,8 @@ impl ApplicationHandler for App {
             let color_blend_state = vk::PipelineColorBlendStateCreateInfo::default()
                 .attachments(&color_attachment_state);
 
-            // reverse depth buffer for increased precision
             let depth_stencil_state = vk::PipelineDepthStencilStateCreateInfo::default()
-                .depth_compare_op(vk::CompareOp::ALWAYS); // TODO: REVERT
+                .depth_compare_op(vk::CompareOp::LESS); // TODO: REVERT
             let viewport_state = vk::PipelineViewportStateCreateInfo::default()
                 .viewport_count(1)
                 .scissor_count(1);
@@ -875,8 +879,8 @@ impl ApplicationHandler for App {
                 .depth_attachment_format(depth_format);
 
             let push_constant_ranges = [vk::PushConstantRange::default()
-                .stage_flags(vk::ShaderStageFlags::VERTEX)
-                .size(size_of::<PC>() as u32)];
+                .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::COMPUTE)
+                .size(size_of::<PushConstants>() as u32)];
             let pipeline_layout_create_info =
                 vk::PipelineLayoutCreateInfo::default().push_constant_ranges(&push_constant_ranges);
 
@@ -922,6 +926,79 @@ impl ApplicationHandler for App {
                 )
             };
 
+            pub fn create_compute_pipeline<'a>(
+                device: &ash::Device,
+                pipeline_layout: vk::PipelineLayout,
+                spv_file: &mut Cursor<&[u8]>,
+                name: &'a CStr,
+            ) -> vk::Pipeline {
+                let bytecode = read_spv(spv_file).expect("Failed to read compute shader spv file.");
+                let shader_module_create_info =
+                    vk::ShaderModuleCreateInfo::default().code(&bytecode);
+                unsafe {
+                    let shader_module = device
+                        .create_shader_module(&shader_module_create_info, None)
+                        .expect("Compute shader module error.");
+                    let pipeline_create_info = vk::ComputePipelineCreateInfo::default()
+                        .stage(
+                            vk::PipelineShaderStageCreateInfo::default()
+                                .stage(ShaderStageFlags::COMPUTE)
+                                .module(shader_module)
+                                .name(name),
+                        )
+                        .layout(pipeline_layout);
+                    return device
+                        .create_compute_pipelines(
+                            vk::PipelineCache::null(),
+                            &[pipeline_create_info],
+                            None,
+                        )
+                        .expect("Could not create compute pipeline")[0];
+                }
+            };
+
+            let mut allocate_bytecode = Cursor::new(&include_bytes!("./shader/allocate.spv")[..]);
+            let allocate_pipeline =
+                create_compute_pipeline(&device, pipeline_layout, &mut allocate_bytecode, c"main");
+            // For cbt_reduce.spv (entry reduce)
+            let mut reduce_bytecode = Cursor::new(&include_bytes!("./shader/reduce.spv")[..]);
+            let reduce_pipeline =
+                create_compute_pipeline(&device, pipeline_layout, &mut reduce_bytecode, c"main");
+
+            // For split_element.spv (entry split_element)
+            let mut split_element_bytecode =
+                Cursor::new(&include_bytes!("./shader/split_element.spv")[..]);
+            let split_element_pipeline = create_compute_pipeline(
+                &device,
+                pipeline_layout,
+                &mut split_element_bytecode,
+                c"main",
+            );
+
+            // For update_pointers.spv (entry update_pointers)
+            let mut update_pointers_bytecode =
+                Cursor::new(&include_bytes!("./shader/update_pointers.spv")[..]);
+            let update_pointers_pipeline = create_compute_pipeline(
+                &device,
+                pipeline_layout,
+                &mut update_pointers_bytecode,
+                c"main",
+            );
+
+            // For prepare_merge.spv (entry prepare_merge)
+            let mut prepare_merge_bytecode =
+                Cursor::new(&include_bytes!("./shader/prepare_merge.spv")[..]);
+            let prepare_merge_pipeline = create_compute_pipeline(
+                &device,
+                pipeline_layout,
+                &mut prepare_merge_bytecode,
+                c"main",
+            );
+
+            // For merge.spv (entry merge)
+            let mut merge_bytecode = Cursor::new(&include_bytes!("./shader/merge.spv")[..]);
+            let merge_pipeline =
+                create_compute_pipeline(&device, pipeline_layout, &mut merge_bytecode, c"main");
             let new_buffer_sized =
                 |initial_data, usage| new_buffer(initial_data, initial_data.len() as u64, usage);
 
@@ -992,6 +1069,13 @@ impl ApplicationHandler for App {
                     cast_slice(&algorithm_data.vertex_buffer[..]),
                     vk::BufferUsageFlags::STORAGE_BUFFER,
                 ),
+
+                allocate_pipeline: allocate_pipeline,
+                reduce_pipeline: reduce_pipeline,
+                split_element_pipeline: split_element_pipeline,
+                update_pointers_pipeline: update_pointers_pipeline,
+                prepare_merge_pipeline: prepare_merge_pipeline,
+                merge_pipeline: merge_pipeline,
             };
 
             let scene = SceneDataGPU {
@@ -1070,8 +1154,6 @@ impl ApplicationHandler for App {
                 vk::BufferUsageFlags::STORAGE_BUFFER,
             );
 
-            let compute_pipeline = vk::ComputePipelineCreateInfo::default();
-
             self.state = Some(State {
                 window: window,
                 instance: instance,
@@ -1108,7 +1190,44 @@ impl ApplicationHandler for App {
                 dispatch_buffer: dispatch_buffer,
 
                 scene_buffer_handles,
+
+                camera: CameraState {
+                    pos: Vec3::new(2.0, 2.0, 2.0),
+                    pitch: PI / 2.0,
+                    yaw: 0.0,
+                },
             })
+        }
+    }
+
+    fn device_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        _id: winit::event::DeviceId,
+        event: DeviceEvent,
+    ) {
+        let state = match &mut self.state {
+            Some(x) => x,
+            None => {
+                println!("No state found");
+                return;
+            }
+        };
+
+        match event {
+            DeviceEvent::MouseMotion { delta } => {
+                let (dx, dy) = delta;
+                const LOOK_SENSITIVITY: f32 = 0.01;
+                state.camera.yaw -= LOOK_SENSITIVITY * dx as f32;
+                state.camera.pitch += LOOK_SENSITIVITY * dy as f32;
+
+                if state.camera.pitch < 0.0 {
+                    state.camera.pitch = 0.0;
+                } else if state.camera.pitch > PI {
+                    state.camera.pitch = PI;
+                }
+            }
+            _ => (),
         }
     }
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
@@ -1341,6 +1460,14 @@ impl ApplicationHandler for App {
                         );
                     }
                 }
+                Key::Character("w") => {
+                    state.camera.pos += state.camera.lookdir() * 0.05;
+                }
+                Key::Character("a") => {}
+                Key::Character("s") => {
+                    state.camera.pos += state.camera.lookdir() * -0.05;
+                }
+                Key::Character("d") => {}
                 _ => (),
             },
             _ => (),

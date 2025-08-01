@@ -1,4 +1,5 @@
 #include "cbt.slang"
+[shader("compute")]
 void merge(
     uint3 tid: SV_DispatchThreadID)
 {

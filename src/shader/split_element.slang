@@ -1,8 +1,9 @@
 #include "common.slang"
 
+[shader("compute")]
 void split_element(uint3 tid: SV_DispatchThreadID)
 {
-    if (tid.x >= pc.dispatch.want_split_buffer_count.x)
+    if (tid.x >= pc.dispatch.want_split_buffer_count.load())
     {
         return;
     }
@@ -10,8 +11,8 @@ void split_element(uint3 tid: SV_DispatchThreadID)
     let neighbors_buffer = pc.scene.neighbors_buffer;
     let base_depth = pc.scene.base_depth;
     uint3 curr_neighbors = neighbors_buffer[curr_id];
-    var remaining_memory_count = pc.dispatch.remaining_memory_count;
-    var allocation_count = pc.dispatch.allocation_counter;
+    // var pc.dispatch.remaining_memory_count = pc.dispatch.remaining_memory_count;
+    // var pc.dispatch.allocation_counter = pc.dispatch.allocation_counter;
     let allocation_buffer = pc.scene.splitting_buffer;
     let heapid_buffer = pc.scene.heapid_buffer;
     let bisector_command_buffer = pc.scene.bisector_split_command_buffer;
@@ -46,22 +47,22 @@ void split_element(uint3 tid: SV_DispatchThreadID)
     uint max_required_memory = (twin_id == INVALID_INDEX) ? 1 : (neighbors_buffer[twin_id][TWIN] == curr_id) ? 2
                                                                                                              : 2 * (current_depth - base_depth) - 1;
 
-    uint remaining_memory = remaining_memory_count.add(-int(max_required_memory));
+    uint remaining_memory = pc.dispatch.remaining_memory_count.add(-int(max_required_memory));
 
     if (remaining_memory < max_required_memory)
     {
-        remaining_memory_count.add(int(max_required_memory)); // undo subtraction
+        pc.dispatch.remaining_memory_count.add(int(max_required_memory)); // undo subtraction
         return;
     }
 
     uint base_pattern = bisector_command_buffer[curr_id].or(CENTER_SPLIT);
     if (base_pattern != NO_SPLIT)
     {
-        remaining_memory_count.add(int(max_required_memory));
+        pc.dispatch.remaining_memory_count.add(int(max_required_memory));
         return;
     }
 
-    uint target_location = allocation_count.add(1);
+    uint target_location = pc.dispatch.allocation_counter.add(1);
     allocation_buffer[target_location] = curr_id;
 
     uint used_memory = 1;
@@ -82,7 +83,7 @@ void split_element(uint3 tid: SV_DispatchThreadID)
             uint twin_prev_command = bisector_command_buffer[twin_id].or(CENTER_SPLIT);
             if (twin_prev_command == NO_SPLIT)
             {
-                uint alloc_loc = allocation_count.add(1);
+                uint alloc_loc = pc.dispatch.allocation_counter.add(1);
                 allocation_buffer[alloc_loc] = twin_id;
                 used_memory += 1;
             }
@@ -101,7 +102,7 @@ void split_element(uint3 tid: SV_DispatchThreadID)
             }
             else
             {
-                uint alloc_loc = allocation_count.add(1);
+                uint alloc_loc = pc.dispatch.allocation_counter.add(1);
                 allocation_buffer[alloc_loc] = twin_id;
                 used_memory += 2;
 
@@ -112,5 +113,5 @@ void split_element(uint3 tid: SV_DispatchThreadID)
         }
     }
 
-    remaining_memory_count.add(max((int(max_required_memory) - int(used_memory)), 0));
+    pc.dispatch.remaining_memory_count.add(max((int(max_required_memory) - int(used_memory)), 0));
 }

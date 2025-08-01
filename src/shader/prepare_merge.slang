@@ -1,4 +1,5 @@
 #include "common.slang"
+[shader("compute")]
 void prepare_merge(
     uint3 tid: SV_DispatchThreadID)
 {
@@ -70,7 +71,7 @@ void prepare_merge(
         neighbor_buffer[next_twin_id][edge_type] = curr_id;
     }
 
-    uint base_slot = pc.dispatch.merging_bisector_count.x.add(num_pairs_to_merge);
+    uint base_slot = pc.dispatch.merging_bisector_count.add(num_pairs_to_merge);
     simplification_buffer[base_slot] = curr_id;
 
     if (num_pairs_to_merge == 2)

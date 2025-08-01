@@ -1,4 +1,4 @@
-#include "common.slang"
+#include "cbt.slang"
 // Lookup table mapping split command + edge index => edge slots
 
 static const uint2 COMMAND_EDGE_LUT[4][3] = {
@@ -49,16 +49,20 @@ void link_siblings(uint prev_sibling, uint next_sibling)
     pc.scene.neighbors_buffer[prev_sibling][NEXT] = next_sibling;
     pc.scene.neighbors_buffer[next_sibling][PREV] = prev_sibling;
 }
-
+[shader("compute")]
 void update_pointers(
-    uint curr_id,
-    RWStructuredBuffer<uint3> neighbor_buffer,
-    RWStructuredBuffer<uint> heap_id_buffer,
-    // StructuredBuffer<atomic_uint> bisector_command_buffer,
-    RWTexture1D<uint> cbt_bitfield)
+    int3 tid: SV_DispatchThreadID)
 {
+
+    if (tid.x >= pc.dispatch.merging_bisector_count.load())
+    {
+        return;
+    }
+    let curr_id = pc.scene.merging_bisector_buffer[tid.x];
+    let heap_id_buffer = pc.scene.heapid_buffer;
     let allocation_indices_buffer = pc.scene.allocation_indices_buffer;
     let bisector_command_buffer = pc.scene.bisector_split_command_buffer;
+    let neighbor_buffer = pc.scene.neighbors_buffer;
     uint curr_heapid = heap_id_buffer[curr_id];
     uint curr_command = bisector_command_buffer[curr_id];
 
@@ -153,12 +157,12 @@ void update_pointers(
     }
 
     // Clear current bit and set new ones
-    cbt_bitfield[curr_id] = 0;
+    unset_bit(curr_id);
     for (int i = 0; i < 4; ++i)
     {
         if (curr_allocation_indices[i] != 0xFFFFFFFF)
         {
-            cbt_bitfield[curr_allocation_indices[i]] = 1;
+            set_bit(curr_allocation_indices[i]);
         }
     }
 }
