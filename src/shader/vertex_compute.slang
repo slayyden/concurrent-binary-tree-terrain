@@ -35,6 +35,8 @@ float3[3] heapid_to_vertices(
     return curr_bisector;
 }
 
+[shader("compute")]
+[numthreads(1024)]
 void write_vertex_buffer(uint3 tid: SV_DispatchThreadID)
 {
     if (tid.x >= pc.scene.cbt_interior[0])

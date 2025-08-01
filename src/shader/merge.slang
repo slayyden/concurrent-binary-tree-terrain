@@ -1,5 +1,6 @@
 #include "cbt.slang"
 [shader("compute")]
+[numthreads(1024)]
 void merge(
     uint3 tid: SV_DispatchThreadID)
 {

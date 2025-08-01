@@ -2,6 +2,7 @@
 
 TriState classify_triangle(float3[3] verts, uint heapid)
 {
+    // return TriState::BISECT_ELEMENT;
     let normal = cross(verts[1] - verts[0], verts[2] - verts[1]);
     if (dot(normal, pc.lookdir) > 0 - 10e-2)
     {
@@ -28,6 +29,7 @@ TriState classify_triangle(float3[3] verts, uint heapid)
 }
 
 [shader("compute")]
+[numthreads(1024)]
 void classify(uint3 tid: SV_DispatchThreadID)
 {
     if (tid.x >= pc.scene.cbt_interior[0])
@@ -38,6 +40,7 @@ void classify(uint3 tid: SV_DispatchThreadID)
     let curr_id = one_bit_to_id(tid.x);
     let heap_id = pc.scene.heapid_buffer[curr_id];
     // Reset some values
+    pc.scene.currid_buffer[tid.x] = curr_id;
     pc.scene.bisector_split_command_buffer[curr_id] = NO_SPLIT;
     // pc.scene.bisector_state_buffer[curr_id] = TriState::;
 

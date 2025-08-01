@@ -142,8 +142,9 @@ impl AllocatedBuffer {
         }
     }
 
-    pub fn new_with_data(
+    pub fn new_with_data<T: Copy>(
         device: &ash::Device,
+        data: &[T],
         size: u64,
         mem_props: vk::PhysicalDeviceMemoryProperties,
         usage: vk::BufferUsageFlags,
@@ -152,13 +153,12 @@ impl AllocatedBuffer {
         command_buffer: vk::CommandBuffer,
         command_buffer_reuse_fence: vk::Fence,
         queue: vk::Queue,
-        data: &[u8],
     ) -> Self {
         let buffer = Self::new(device, size, mem_props, usage, sharing_mode, memory_type);
-
+        let copy_size = (size_of::<T>() * data.len()) as u64;
         let staging_buffer = AllocatedBuffer::new(
             &device,
-            data.len() as u64,
+            copy_size,
             mem_props,
             vk::BufferUsageFlags::TRANSFER_SRC,
             vk::SharingMode::EXCLUSIVE,
@@ -169,15 +169,13 @@ impl AllocatedBuffer {
                 .map_memory(
                     staging_buffer.allocation,
                     0,
-                    data.len() as u64,
+                    copy_size,
                     vk::MemoryMapFlags::empty(),
                 )
                 .expect("Failed to map device memory.");
-            let mut staging_buffer_slice = Align::new(
-                staging_buffer_ptr,
-                align_of::<f32>() as u64,
-                data.len() as u64,
-            );
+            let mut staging_buffer_slice =
+                Align::new(staging_buffer_ptr, align_of::<T>() as u64, copy_size);
+
             staging_buffer_slice.copy_from_slice(data);
 
             record_submit_commandbuffer(
@@ -188,8 +186,8 @@ impl AllocatedBuffer {
                 &[],
                 &[],
                 &[],
-                |device, setup_command_buffer| {
-                    let copy_region = vk::BufferCopy::default().size(data.len() as u64);
+                |device, command_buffer| {
+                    let copy_region = vk::BufferCopy::default().size(copy_size);
                     device.cmd_copy_buffer(
                         command_buffer,
                         staging_buffer.buffer,
@@ -199,10 +197,35 @@ impl AllocatedBuffer {
                 },
             );
             device.device_wait_idle().expect("Wait idle.");
+            device.unmap_memory(staging_buffer.allocation);
+            staging_buffer.destroy(device);
         }
-        staging_buffer.destroy(device);
 
         return buffer;
+    }
+    pub fn new_with_data_sized<T: Copy>(
+        data: &[T],
+        device: &ash::Device,
+        mem_props: vk::PhysicalDeviceMemoryProperties,
+        usage: vk::BufferUsageFlags,
+        sharing_mode: vk::SharingMode,
+        memory_type: vk::MemoryPropertyFlags,
+        command_buffer: vk::CommandBuffer,
+        command_buffer_reuse_fence: vk::Fence,
+        queue: vk::Queue,
+    ) -> AllocatedBuffer {
+        AllocatedBuffer::new_with_data(
+            device,
+            data,
+            (size_of::<T>() * data.len()) as u64,
+            mem_props,
+            usage,
+            sharing_mode,
+            memory_type,
+            command_buffer,
+            command_buffer_reuse_fence,
+            queue,
+        )
     }
 
     pub fn device_address(&self, device: &Device) -> vk::DeviceAddress {
@@ -1006,6 +1029,7 @@ pub fn merge(
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct SceneDataGPU {
     // written once at initialization
     pub root_bisector_vertices: vk::DeviceAddress,
@@ -1015,7 +1039,6 @@ pub struct SceneDataGPU {
     pub cbt_leaves: vk::DeviceAddress,
 
     // classification stage
-    pub classification_buffer: vk::DeviceAddress,
     pub bisector_state_buffer: vk::DeviceAddress,
 
     // prepare split
@@ -1039,6 +1062,8 @@ pub struct SceneDataGPU {
     // draw
     pub vertex_buffer: vk::DeviceAddress,
 
+    pub curr_id_buffer: vk::DeviceAddress,
+
     // integers
     pub num_memory_blocks: u32,
     pub base_depth: u32,
@@ -1055,7 +1080,7 @@ pub struct SceneCPUHandles {
 
     // classification stage
     // pub classification_pipeline: vk::Pipeline,
-    pub classification_buffer: AllocatedBuffer,
+    pub classify_pipeline: vk::Pipeline,
     pub bisector_state_buffer: AllocatedBuffer,
 
     // prepare split
@@ -1079,21 +1104,30 @@ pub struct SceneCPUHandles {
     // draw
     pub vertex_buffer: AllocatedBuffer,
 
-    pub allocate_pipeline: vk::Pipeline,
-    pub reduce_pipeline: vk::Pipeline,
+    // reset
+    pub reset_pipeline: vk::Pipeline,
+
     pub split_element_pipeline: vk::Pipeline,
+    pub allocate_pipeline: vk::Pipeline,
     pub update_pointers_pipeline: vk::Pipeline,
     pub prepare_merge_pipeline: vk::Pipeline,
     pub merge_pipeline: vk::Pipeline,
+    pub reduce_pipeline: vk::Pipeline,
+
+    pub curr_id_buffer: AllocatedBuffer,
 }
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct DispatchSizeGPU {
+    pub draw_indirect_command: vk::DrawIndirectCommand,
     pub remaining_memory_count: vk::DispatchIndirectCommand,
     pub allocation_counter: vk::DispatchIndirectCommand,
     pub want_split_buffer_count: vk::DispatchIndirectCommand,
     pub splitting_buffer_count: vk::DispatchIndirectCommand,
     pub want_merge_buffer_count: vk::DispatchIndirectCommand,
     pub merging_bisector_count: vk::DispatchIndirectCommand,
+    pub num_allocated_blocks: vk::DispatchIndirectCommand,
+    pub vertex_buffer_count: u32,
 }
 
 pub struct PipelineData {
@@ -1116,7 +1150,7 @@ pub struct PipelineData {
 
     // intermediary buffers for various stages
     // use this later
-    pub classification_buffer: Vec<u8>,
+    pub classification_buffer: Vec<u32>,
 
     pub remaining_memory_count: AtomicU32,
     pub allocation_counter: AtomicU32,

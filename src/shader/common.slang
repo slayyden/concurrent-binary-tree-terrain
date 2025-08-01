@@ -8,7 +8,6 @@ struct SceneData
     uint *cbt_leaves;
 
     // classification stage
-    uint *classification_buffer;
     TriState *bisector_state_buffer;
 
     // prepare split
@@ -32,15 +31,26 @@ struct SceneData
     // draw
     float3 *vertex_buffer;
 
+    uint *currid_buffer;
+
     // integers
     uint num_memory_blocks;
     uint base_depth;
     uint cbt_depth;
 }
-// TODO: UPDATE RUST SIDE PLEASE PLEASE PLEASE
+
+struct DrawIndirectCommand
+{
+    uint vertex_count;
+    uint instance_count;
+    uint first_vertex;
+    uint first_instance;
+}
+
 struct DispatchData
 {
-    Atomic<uint> remaining_memory_count;
+    DrawIndirectCommand draw_indirect_command;
+    Atomic<uint> remaining_memory_count; // written at reset
     uint2 pad0;
     Atomic<uint> allocation_counter;
     uint2 pad1;
@@ -52,10 +62,9 @@ struct DispatchData
     uint2 pad4;
     Atomic<uint> merging_bisector_count;
     uint2 pad2;
-    uint num_allocated_blocks;
+    uint num_allocated_blocks; // NOT reset
     uint2 pad7;
     Atomic<uint> vertex_buffer_count;
-    uint2 pad6;
 }
 
 struct PushConstant

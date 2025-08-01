@@ -19,13 +19,33 @@ v2p vertexMain(uint vid: SV_VertexID)
     // uint32_t channel = pushConst.curr_id[vid / 3] / 8;
     // float3 color = float3(0.0, 0.0, 0.0);
     // color[channel] = ((pushConst.curr_id[vid / 3] % 8) + 1) / 8.0;
+
+    // let curr_id = pc.scene.currid_buffer[vid / 3];
+    let curr_id = vid / 3;
+    let state = pc.scene.bisector_state_buffer[curr_id];
+    var color = float3(1.0, 0.0, 0.0);
+    /*
+    if (state == TriState::BISECT_ELEMENT)
+    {
+        color = float3(0.0, 1.0, 0.0);
+    }
+    else if (state == TriState::SIMPLIFY_ELEMENT)
+    {
+        color = float3(0.0, 1.0, 1.0);
+    }*/
+
     output.color = colors[vid % 3];
+    if (pc.scene.root_bisector_vertices == nullptr)
+    {
+        color = float3(0.0, 1.0, 0.0);
+    }
     float4 pos = float4(pc.positions[vid], 1);
     pos.y = -pos.y;
     // pos = mul(pos, pc.view_project);
     pos = mul(pos, pc.view_project);
     // output.sv_position = mul(pos, pc.view_project);
     output.sv_position = pos;
+    output.color = color;
 
     return output;
 }

@@ -1,6 +1,7 @@
 #include "common.slang"
 
 [shader("compute")]
+[numthreads(1024)]
 void split_element(uint3 tid: SV_DispatchThreadID)
 {
     if (tid.x >= pc.dispatch.want_split_buffer_count.load())

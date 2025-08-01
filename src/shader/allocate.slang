@@ -1,6 +1,7 @@
 #include "cbt.slang"
 
 [shader("compute")]
+[numthreads(1024)]
 void allocate(
     uint3 threadId: SV_DispatchThreadID)
 {

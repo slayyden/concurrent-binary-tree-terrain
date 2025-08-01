@@ -1,9 +1,10 @@
 #include "common.slang"
 [shader("compute")]
+[numthreads(1024)]
 void prepare_merge(
     uint3 tid: SV_DispatchThreadID)
 {
-    if (tid.x >= pc.dispatch.want_merge_buffer_count.x)
+    if (tid.x >= pc.dispatch.want_merge_buffer_count.load())
     {
         return;
     }
