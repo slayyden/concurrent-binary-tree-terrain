@@ -1084,23 +1084,26 @@ pub struct SceneCPUHandles {
     pub bisector_state_buffer: AllocatedBuffer,
 
     // prepare split
+    pub dispatch_split_pipeline: vk::Pipeline,
     pub bisector_split_command_buffer: AllocatedBuffer,
     pub neighbors_buffer: AllocatedBuffer,
     pub splitting_buffer: AllocatedBuffer,
     pub heapid_buffer: AllocatedBuffer,
 
     // allocate
+    pub dispatch_allocate_pipeline: vk::Pipeline,
     pub allocation_indices_buffer: AllocatedBuffer,
 
     // split
     pub want_split_buffer: AllocatedBuffer,
 
     // prepare merge
+    pub dispatch_prepare_merge_pipeline: vk::Pipeline,
     pub want_merge_buffer: AllocatedBuffer,
 
     // merge
     pub merging_bisector_buffer: AllocatedBuffer,
-
+    pub vertex_compute_pipeline: vk::Pipeline,
     // draw
     pub vertex_buffer: AllocatedBuffer,
 
@@ -1119,17 +1122,27 @@ pub struct SceneCPUHandles {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct DispatchSizeGPU {
+    // written to by reduce
     pub draw_indirect_command: vk::DrawIndirectCommand,
-    pub remaining_memory_count: vk::DispatchIndirectCommand,
-    pub allocation_counter: vk::DispatchIndirectCommand,
-    pub want_split_buffer_count: vk::DispatchIndirectCommand,
-    pub splitting_buffer_count: vk::DispatchIndirectCommand,
-    pub want_merge_buffer_count: vk::DispatchIndirectCommand,
-    pub merging_bisector_count: vk::DispatchIndirectCommand,
-    pub num_allocated_blocks: vk::DispatchIndirectCommand,
+
+    // before split
+    pub dispatch_split_command: vk::DispatchIndirectCommand,
+    // before allocate
+    pub dispatch_allocate_command: vk::DispatchIndirectCommand,
+    // before prepare_merge
+    pub dispatch_prepare_merge_command: vk::DispatchIndirectCommand,
+    // written to by reduce
+    pub dispatch_vertex_compute_command: vk::DispatchIndirectCommand,
+
+    pub remaining_memory_count: u32,
+    pub allocation_counter: u32,
+    pub want_split_buffer_count: u32,
+    pub splitting_buffer_count: u32,
+    pub want_merge_buffer_count: u32,
+    pub merging_bisector_count: u32,
+    pub num_allocated_blocks: u32,
     pub vertex_buffer_count: u32,
 }
-
 pub struct PipelineData {
     // written once at initialization
     pub root_bisector_vertices: Vec<[Vec3; 3]>,
@@ -1170,7 +1183,7 @@ pub struct PipelineData {
 }
 
 pub fn linear_dispatch(x: u32) -> vk::DispatchIndirectCommand {
-    vk::DispatchIndirectCommand { x: x, y: 0, z: 0 }
+    vk::DispatchIndirectCommand { x: x, y: 1, z: 1 }
 }
 
 impl PipelineData {

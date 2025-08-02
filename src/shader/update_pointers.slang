@@ -49,8 +49,9 @@ void link_siblings(uint prev_sibling, uint next_sibling)
     pc.scene.neighbors_buffer[prev_sibling][NEXT] = next_sibling;
     pc.scene.neighbors_buffer[next_sibling][PREV] = prev_sibling;
 }
+
 [shader("compute")]
-[numthreads(1024)]
+[numthreads(WORKGROUP_SIZE, 1, 1)]
 void update_pointers(
     int3 tid: SV_DispatchThreadID)
 {

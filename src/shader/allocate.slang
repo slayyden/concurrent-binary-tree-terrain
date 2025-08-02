@@ -1,7 +1,7 @@
 #include "cbt.slang"
 
 [shader("compute")]
-[numthreads(1024)]
+[numthreads(WORKGROUP_SIZE, 1, 1)]
 void allocate(
     uint3 threadId: SV_DispatchThreadID)
 {

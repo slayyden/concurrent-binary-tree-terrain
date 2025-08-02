@@ -2,7 +2,7 @@
 #include "common.slang"
 
 [shader("compute")]
-[numthreads(1024)]
+[numthreads(1024, 1, 1)]
 void reduce(uint3 threadId: SV_DispatchThreadID)
 {
     let interior_offset = num_internal / 2;
@@ -41,7 +41,10 @@ void reduce(uint3 threadId: SV_DispatchThreadID)
 
     if (tid.x == 0)
     {
-        pc.dispatch.num_allocated_blocks = scene.cbt_interior[0];
+        let num_bisectors = scene.cbt_interior[0];
+        pc.dispatch.num_allocated_blocks = num_bisectors;
+        pc.dispatch.draw_indirect_command.vertex_count = num_bisectors;
+        pc.dispatch.dispatch_vertex_compute_command.x = div_ceil(num_bisectors, WORKGROUP_SIZE);
     }
 }
 

@@ -36,8 +36,8 @@ float3[3] heapid_to_vertices(
 }
 
 [shader("compute")]
-[numthreads(1024)]
-void write_vertex_buffer(uint3 tid: SV_DispatchThreadID)
+[numthreads(WORKGROUP_SIZE, 1, 1)]
+void vertex_compute(uint3 tid: SV_DispatchThreadID)
 {
     if (tid.x >= pc.scene.cbt_interior[0])
     {

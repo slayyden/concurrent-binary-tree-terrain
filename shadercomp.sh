@@ -10,3 +10,7 @@ $SLANGC src/shader/update_pointers.slang $FLAGS -entry update_pointers -o src/sh
 $SLANGC src/shader/prepare_merge.slang $FLAGS -entry prepare_merge -o src/shader/prepare_merge.spv
 $SLANGC src/shader/merge.slang $FLAGS -entry merge -o src/shader/merge.spv
 $SLANGC src/shader/reset.slang $FLAGS -entry reset -o src/shader/reset.spv
+$SLANGC src/shader/dispatch_allocate.slang $FLAGS -entry dispatch_allocate -o src/shader/dispatch_allocate.spv
+$SLANGC src/shader/dispatch_prepare_merge.slang $FLAGS -entry dispatch_prepare_merge -o src/shader/dispatch_prepare_merge.spv
+$SLANGC src/shader/dispatch_split.slang $FLAGS -entry dispatch_split -o src/shader/dispatch_split.spv
+$SLANGC src/shader/vertex_compute.slang $FLAGS -entry vertex_compute -o src/shader/vertex_compute.spv

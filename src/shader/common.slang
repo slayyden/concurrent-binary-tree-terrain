@@ -47,23 +47,32 @@ struct DrawIndirectCommand
     uint first_instance;
 }
 
+struct DispatchIndirectCommand
+{
+    uint x;
+    uint y;
+    uint z;
+}
+
 struct DispatchData
 {
     DrawIndirectCommand draw_indirect_command;
-    Atomic<uint> remaining_memory_count; // written at reset
-    uint2 pad0;
+
+    DispatchIndirectCommand dispatch_split_command;
+    DispatchIndirectCommand dispatch_allocate_command;
+    DispatchIndirectCommand dispatch_prepare_merge_command;
+    // written at reduce
+    DispatchIndirectCommand dispatch_vertex_compute_command;
+
+    // written at
+    Atomic<uint> remaining_memory_count;
     Atomic<uint> allocation_counter;
-    uint2 pad1;
     Atomic<uint> want_split_buffer_count;
-    uint2 pad3;
     Atomic<uint> splitting_buffer_count;
-    uint2 pad5;
     Atomic<uint> want_merge_buffer_count;
-    uint2 pad4;
     Atomic<uint> merging_bisector_count;
-    uint2 pad2;
-    uint num_allocated_blocks; // NOT reset
-    uint2 pad7;
+    // written at reduce
+    uint num_allocated_blocks;
     Atomic<uint> vertex_buffer_count;
 }
 
@@ -77,6 +86,8 @@ struct PushConstant
     float3 cam_pos;
     float3 lookdir;
 }
+
+static const uint WORKGROUP_SIZE = 64;
 
 static const uint BITFIELD_INT_SIZE = 32;
 static const uint INVALID_INDEX = 0xFFFF_FFFF;
@@ -114,7 +125,7 @@ ConstantBuffer<PushConstant> pc;
 
 uint heap_id_depth(uint heapid)
 {
-    return firstbithigh(heapid);
+    return firstbithigh(heapid) + 1;
 }
 
 // Given current ID and neighbor's neighbors, find edge type
@@ -126,4 +137,9 @@ uint find_edge_type(uint curr_id, uint3 neighbor_neighbors)
         return PREV;
     else
         return TWIN;
+}
+
+uint div_ceil(uint x, uint divisor)
+{
+    return (x + divisor - 1) / divisor;
 }

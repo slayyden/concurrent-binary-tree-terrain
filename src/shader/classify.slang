@@ -2,11 +2,11 @@
 
 TriState classify_triangle(float3[3] verts, uint heapid)
 {
-    // return TriState::BISECT_ELEMENT;
     let normal = cross(verts[1] - verts[0], verts[2] - verts[1]);
-    if (dot(normal, pc.lookdir) > 0 - 10e-2)
+    let normal_normalized = normalize(normal);
+    if (dot(normal_normalized, pc.lookdir) > 0 - 10e-2)
     {
-        return TriState::TOO_SMALL;
+        return TriState::BACK_FACE_CULLED;
     }
     let tri_center = 0.3333 * (verts[0] + verts[1] + verts[2]);
     let center_to_cam = tri_center - pc.cam_pos;
@@ -29,7 +29,7 @@ TriState classify_triangle(float3[3] verts, uint heapid)
 }
 
 [shader("compute")]
-[numthreads(1024)]
+[numthreads(64, 1, 1)]
 void classify(uint3 tid: SV_DispatchThreadID)
 {
     if (tid.x >= pc.scene.cbt_interior[0])
