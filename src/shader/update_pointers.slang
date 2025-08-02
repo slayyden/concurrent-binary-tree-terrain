@@ -69,7 +69,38 @@ void update_pointers(
     uint curr_command = bisector_command_buffer[curr_id];
 
     uint3 neighbors = neighbor_buffer[curr_id];
-    uint4 curr_allocation_indices = allocation_indices_buffer[curr_id];
+    uint4 curr_allocation_indices = pc.scene.allocation_indices_buffer[curr_id];
+
+    // Clear current bit and set new ones
+    unset_bit(curr_id);
+    for (int i = 0; i < 4; ++i)
+    {
+        let allocation_index = curr_allocation_indices[i];
+        if (allocation_index != INVALID_INDEX)
+        {
+            set_bit(allocation_index);
+        }
+        else
+        {
+            break;
+        }
+    }
+    /*
+     if (tid.x == 0)
+     {
+         for (int i = 0; i < 4; ++i)
+         {
+             let allocation_index = curr_allocation_indices[i];
+             if (allocation_index != INVALID_INDEX)
+             {
+                 set_bit(allocation_index);
+             }
+             else
+             {
+                 break;
+             }
+         }
+     }*/
 
     // Loop over each edge (NEXT, PREV, TWIN)
     for (uint bisector_edge_idx = 0; bisector_edge_idx < 3; ++bisector_edge_idx)
@@ -156,15 +187,5 @@ void update_pointers(
         heap_id_buffer[curr_allocation_indices[1]] = 4 * curr_heapid + 1;
         heap_id_buffer[curr_allocation_indices[2]] = 4 * curr_heapid + 2;
         heap_id_buffer[curr_allocation_indices[0]] = 4 * curr_heapid + 3;
-    }
-
-    // Clear current bit and set new ones
-    unset_bit(curr_id);
-    for (int i = 0; i < 4; ++i)
-    {
-        if (curr_allocation_indices[i] != INVALID_INDEX)
-        {
-            set_bit(curr_allocation_indices[i]);
-        }
     }
 }

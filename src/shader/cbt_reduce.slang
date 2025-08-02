@@ -14,7 +14,7 @@ void reduce(uint3 threadId: SV_DispatchThreadID)
         let j = tid * 4 + i;
         if (j <= interior_offset)
         {
-            scene.cbt_interior[interior_offset + j] = countbits(scene.cbt_leaves[j]);
+            scene.cbt_interior[interior_offset + j] = countbits(scene.cbt_leaves[j].load());
         }
     }
 

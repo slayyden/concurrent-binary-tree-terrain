@@ -1080,6 +1080,7 @@ pub struct SceneCPUHandles<'a> {
     pub neighbors_buffer_mapped: &'a [[u32; 3]],
     pub allocation_indices_mapped: &'a [[u32; 4]],
     pub bisector_command_mapped: &'a [u32],
+    pub splitting_buffer_mapped: &'a [u32],
 
     // written once at initialization
     pub root_bisector_vertices: AllocatedBuffer,

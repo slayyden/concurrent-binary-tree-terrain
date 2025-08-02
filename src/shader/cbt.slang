@@ -49,7 +49,7 @@ uint one_bit_to_id(uint index)
 
     let leaf_idx = base_idx * BITFIELD_INT_SIZE;
     // get the index of the bit in the leaf
-    let leaf = leaves[base_idx];
+    let leaf = leaves[base_idx].load();
     var bit_idx = firstbitlow(leaf);
     for (int i = 0; i < one_count; ++i)
     {
@@ -105,7 +105,7 @@ uint zero_bit_to_id(
 
     let leaf_idx = base_idx * BITFIELD_INT_SIZE;
     // get the index of the bit in the leaf
-    let leaf = leaves[base_idx];
+    let leaf = leaves[base_idx].load();
     var bit_idx = firstbitlow(~leaf);
     for (int i = 0; i < zero_count; ++i)
     {
@@ -126,15 +126,16 @@ void set_bit(uint index)
     uint bit_idx = index % BITFIELD_INT_SIZE;
 
     uint bit = 1u << bit_idx;
-    InterlockedOr(leaves[leaf_idx], bit);
+    leaves[leaf_idx].or(bit);
 }
 
 void unset_bit(uint index)
 {
+    // let leaves = pc.scene.cbt_leaves;
     let leaves = pc.scene.cbt_leaves;
     uint leaf_idx = index / BITFIELD_INT_SIZE;
     uint bit_idx = index % BITFIELD_INT_SIZE;
 
     uint bit = 1u << bit_idx;
-    InterlockedAnd(leaves[leaf_idx], ~bit);
+    leaves[leaf_idx].and(~bit);
 }

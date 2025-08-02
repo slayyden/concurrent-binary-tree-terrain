@@ -551,7 +551,7 @@ impl<'a> State<'a> {
             println!("dispatch: {:?}", *self.dispatch_mapped);
             println!("leaf: {:b}", self.scene_buffer_handles.cbt_leaves_mapped[0]);
 
-            for i in 0..self.scene_buffer_handles.cbt_interior_mapped[0] {
+            for i in 0..(self.scene_buffer_handles.cbt_interior_mapped[0] * 2) {
                 let i = i as usize;
                 println!("i: {:?}", i);
                 println!(
@@ -573,6 +573,10 @@ impl<'a> State<'a> {
                 println!(
                     "commands: {:?}",
                     self.scene_buffer_handles.bisector_command_mapped[i],
+                );
+                println!(
+                    "splitting: {:?}",
+                    self.scene_buffer_handles.splitting_buffer_mapped[i],
                 );
                 if (i < 6) {
                     println!(
@@ -1468,6 +1472,35 @@ impl<'a> ApplicationHandler for App<'a> {
                 algorithm_data.vertex_buffer.len(),
             );
 
+            let splitting_buffer = AllocatedBuffer::new_with_data_sized(
+                algorithm_data.splitting_buffer.as_slice(),
+                &device,
+                mem_props,
+                vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
+                    | vk::BufferUsageFlags::TRANSFER_DST
+                    | vk::BufferUsageFlags::INDIRECT_BUFFER
+                    | vk::BufferUsageFlags::STORAGE_BUFFER,
+                vk::SharingMode::EXCLUSIVE,
+                vk::MemoryPropertyFlags::DEVICE_LOCAL
+                    | vk::MemoryPropertyFlags::HOST_VISIBLE
+                    | vk::MemoryPropertyFlags::HOST_COHERENT,
+                setup_command_buffer,
+                setup_commands_reuse_fence,
+                present_queue,
+            );
+            let splitting_buffer_ptr = device
+                .map_memory(
+                    splitting_buffer.allocation,
+                    0,
+                    (size_of::<u32>() * algorithm_data.splitting_buffer.len()) as u64,
+                    vk::MemoryMapFlags::empty(),
+                )
+                .expect("Map Memory.") as *const u32;
+            let splitting_buffer_mapped = std::slice::from_raw_parts(
+                splitting_buffer_ptr,
+                algorithm_data.splitting_buffer.len(),
+            );
+
             let heapid_buffer = AllocatedBuffer::new_with_data_sized(
                 algorithm_data.heapid_buffer.as_slice(),
                 &device,
@@ -1562,6 +1595,7 @@ impl<'a> ApplicationHandler for App<'a> {
                 neighbors_buffer_mapped: neighbors_mapped,
                 allocation_indices_mapped: allocation_indices_mapped,
                 bisector_command_mapped: bisector_command_buffer_mapped,
+                splitting_buffer_mapped: splitting_buffer_mapped,
 
                 cbt_interior: cbt_interior_buffer,
                 cbt_leaves: cbt_leaves_buffer,
@@ -1583,21 +1617,7 @@ impl<'a> ApplicationHandler for App<'a> {
 
                 bisector_split_command_buffer: bisector_command_buffer,
                 neighbors_buffer: neighbors_buffer,
-                splitting_buffer: AllocatedBuffer::new_with_data_sized(
-                    algorithm_data.splitting_buffer.as_slice(),
-                    &device,
-                    mem_props,
-                    vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
-                        | vk::BufferUsageFlags::TRANSFER_DST
-                        | vk::BufferUsageFlags::INDIRECT_BUFFER
-                        | vk::BufferUsageFlags::STORAGE_BUFFER,
-                    vk::SharingMode::EXCLUSIVE,
-                    vk::MemoryPropertyFlags::DEVICE_LOCAL,
-                    setup_command_buffer,
-                    setup_commands_reuse_fence,
-                    present_queue,
-                ),
-
+                splitting_buffer: splitting_buffer,
                 heapid_buffer: AllocatedBuffer::new_with_data_sized(
                     algorithm_data.heapid_buffer.as_slice(),
                     &device,

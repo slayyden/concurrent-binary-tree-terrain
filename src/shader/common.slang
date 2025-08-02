@@ -5,7 +5,7 @@ struct SceneData
     // our concurrent binary tree
     // cbt: CBT,
     uint *cbt_interior;
-    uint *cbt_leaves;
+    Atomic<uint> *cbt_leaves;
 
     // classification stage
     TriState *bisector_state_buffer;
