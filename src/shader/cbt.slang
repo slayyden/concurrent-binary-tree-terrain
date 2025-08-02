@@ -29,8 +29,6 @@ uint one_bit_to_id(uint index)
             index -= interior[lesser_child_idx]; // eliminate lesser subtree sum
         }
 
-        // BOOKMARK
-
         // go until interior_idx is at the deepest level of the interior
         if (interior_idx >= interior_base_offset)
         {
@@ -55,8 +53,10 @@ uint one_bit_to_id(uint index)
     var bit_idx = firstbitlow(leaf);
     for (int i = 0; i < one_count; ++i)
     {
-        let leaf = leaf >> bit_idx + 1;   // add 1 to skip over the next bit
-        bit_idx += firstbitlow(leaf) + 1; // add 1 to skip over the previous bit
+        if (bit_idx >= 31)
+            break;
+        let leaf_shifted = leaf >> (bit_idx + 1); // add 1 to skip over the next bit
+        bit_idx += firstbitlow(leaf_shifted) + 1; // add 1 to skip over the previous bit
     }
     return leaf_idx + bit_idx;
 }
@@ -109,8 +109,10 @@ uint zero_bit_to_id(
     var bit_idx = firstbitlow(~leaf);
     for (int i = 0; i < zero_count; ++i)
     {
-        let leaf = leaf >> bit_idx + 1;    // add 1 to skip over the next bit
-        bit_idx += firstbitlow(~leaf) + 1; // add 1 to skip over the previous bit
+        if (bit_idx >= 31)
+            break;
+        let leaf_shifted = leaf >> (bit_idx + 1);  // add 1 to skip over the next bit
+        bit_idx += firstbitlow(~leaf_shifted) + 1; // add 1 to skip over the previous bit
     }
 
     return leaf_idx + bit_idx;
@@ -118,22 +120,21 @@ uint zero_bit_to_id(
 
 void set_bit(uint index)
 {
+    // let leaves = pc.scene.cbt_leaves;
     let leaves = pc.scene.cbt_leaves;
-    const uint BITFIELD_INT_SIZE = 32; // or whatever your constant is
     uint leaf_idx = index / BITFIELD_INT_SIZE;
     uint bit_idx = index % BITFIELD_INT_SIZE;
 
     uint bit = 1u << bit_idx;
-    leaves[leaf_idx].or(bit);
+    InterlockedOr(leaves[leaf_idx], bit);
 }
 
 void unset_bit(uint index)
 {
     let leaves = pc.scene.cbt_leaves;
-    const uint BITFIELD_INT_SIZE = 32; // same as above
     uint leaf_idx = index / BITFIELD_INT_SIZE;
     uint bit_idx = index % BITFIELD_INT_SIZE;
 
     uint bit = 1u << bit_idx;
-    leaves[leaf_idx].and(~bit);
+    InterlockedAnd(leaves[leaf_idx], ~bit);
 }

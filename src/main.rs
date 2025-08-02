@@ -54,7 +54,9 @@ struct AtomicTest {
     test: AtomicU32,
 }
 
-struct State {
+struct State<'a> {
+    // dbg
+    dispatch_mapped: &'a DispatchSizeGPU,
     window: Window,
     instance: ash::Instance,
     device: ash::Device,
@@ -89,14 +91,14 @@ struct State {
     algorithm_data: PipelineData,
     iteration_counter: u32,
 
-    scene_buffer_handles: SceneCPUHandles,
+    scene_buffer_handles: SceneCPUHandles<'a>,
     scene_buffer: AllocatedBuffer,
     dispatch_buffer: AllocatedBuffer,
 
     camera: CameraState,
 }
 
-impl State {
+impl<'a> State<'a> {
     pub fn render(&mut self) {
         unsafe {
             let dev = &self.device;
@@ -235,7 +237,6 @@ impl State {
                 vk::PipelineBindPoint::COMPUTE,
                 self.scene_buffer_handles.classify_pipeline,
             );
-            // dev.cmd_dispatch(*cmdbuf, 1, 1, 1);
 
             dev.cmd_dispatch_indirect(
                 *cmdbuf,
@@ -359,7 +360,6 @@ impl State {
             );
             dev.cmd_dispatch(*cmdbuf, 1, 1, 1);
             global_memory_barrier();
-
             // vertex compute
             dev.cmd_bind_pipeline(
                 *cmdbuf,
@@ -372,7 +372,6 @@ impl State {
                 offset_of!(DispatchSizeGPU, dispatch_vertex_compute_command) as u64,
             );
             global_memory_barrier();
-
             dev.cmd_begin_rendering(*cmdbuf, &rendering_info);
 
             // RENDERING CORE
@@ -409,6 +408,7 @@ impl State {
                         .layer_count(1),
                 ],
             );
+
             dev.cmd_draw_indirect(
                 *cmdbuf,
                 self.dispatch_buffer.buffer,
@@ -416,6 +416,7 @@ impl State {
                 1,
                 0,
             );
+            // dev.cmd_draw(*cmdbuf, 18, 1, 0, 0);
 
             dev.cmd_end_rendering(*cmdbuf);
 
@@ -515,21 +516,87 @@ impl State {
             }
 
             // WARNING: WE CANNOT RETURN EARLY BECAUSE OF THIS
+            println!(
+                "interior0: {:?}",
+                self.scene_buffer_handles.cbt_interior_mapped[0]
+            );
+            println!(
+                "interior1: {:?}",
+                self.scene_buffer_handles.cbt_interior_mapped[1]
+            );
+            println!(
+                "interior2: {:?}",
+                self.scene_buffer_handles.cbt_interior_mapped[3]
+            );
+            println!(
+                "interior3: {:?}",
+                self.scene_buffer_handles.cbt_interior_mapped[7]
+            );
+            println!(
+                "interior4: {:?}",
+                self.scene_buffer_handles.cbt_interior_mapped[15]
+            );
+            println!(
+                "interior5: {:?}",
+                self.scene_buffer_handles.cbt_interior_mapped[31]
+            );
+            println!(
+                "interior6: {:?}",
+                self.scene_buffer_handles.cbt_interior_mapped[63]
+            );
+            println!(
+                "interior4: {:?}",
+                self.scene_buffer_handles.cbt_interior_mapped[4095]
+            );
+            println!("dispatch: {:?}", *self.dispatch_mapped);
+            println!("leaf: {:b}", self.scene_buffer_handles.cbt_leaves_mapped[0]);
+
+            for i in 0..self.scene_buffer_handles.cbt_interior_mapped[0] {
+                let i = i as usize;
+                println!("i: {:?}", i);
+                println!(
+                    "vertex: {:?}",
+                    self.scene_buffer_handles.vertex_buffer_mapped[i],
+                );
+                println!(
+                    "heapid: {:b}",
+                    self.scene_buffer_handles.heapid_buffer_mapped[i],
+                );
+                println!(
+                    "neighbors: {:?}",
+                    self.scene_buffer_handles.neighbors_buffer_mapped[i],
+                );
+                println!(
+                    "allocation_indices: {:?}",
+                    self.scene_buffer_handles.allocation_indices_mapped[i],
+                );
+                println!(
+                    "commands: {:?}",
+                    self.scene_buffer_handles.bisector_command_mapped[i],
+                );
+                if (i < 6) {
+                    println!(
+                        "root_bisector: {:?}",
+                        self.scene_buffer_handles.root_bisector_buffer_mapped[i],
+                    );
+                }
+            }
+            println!("cam : {:?}", self.camera);
             self.frame_index += 1;
         }
     }
 }
 
-struct App {
-    state: Option<State>,
+struct App<'a> {
+    state: Option<State<'a>>,
 }
-impl App {
+impl<'a> App<'a> {
     pub fn new() -> Self {
         Self { state: None }
     }
 }
 
-impl ApplicationHandler for App {
+impl<'a> ApplicationHandler for App<'a> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         println!("resumed");
         // create window
@@ -861,6 +928,7 @@ impl ApplicationHandler for App {
             };
             let algorithm_data = PipelineData::new(halfedge_mesh, 17);
             debug_assert!(algorithm_data.cbt.leaves.len() == 4096);
+            debug_assert!(algorithm_data.base_depth == 3);
 
             let vertex_buffer_size =
                 (size_of::<[Vec3; 3]>() * algorithm_data.vertex_buffer.len()) as u64;
@@ -1239,54 +1307,267 @@ impl ApplicationHandler for App {
                 std::mem::transmute(algorithm_data.cbt.leaves.as_slice());
 
             let mem_props = device_memory_properties;
+            let cbt_interior_buffer = AllocatedBuffer::new_with_data_sized(
+                &algorithm_data.cbt.interior,
+                &device,
+                mem_props,
+                vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
+                    | vk::BufferUsageFlags::TRANSFER_DST
+                    | vk::BufferUsageFlags::INDIRECT_BUFFER
+                    | vk::BufferUsageFlags::STORAGE_BUFFER,
+                vk::SharingMode::EXCLUSIVE,
+                vk::MemoryPropertyFlags::DEVICE_LOCAL
+                    | vk::MemoryPropertyFlags::HOST_VISIBLE
+                    | vk::MemoryPropertyFlags::HOST_COHERENT,
+                setup_command_buffer,
+                setup_commands_reuse_fence,
+                present_queue,
+            );
+
+            let cbt_interior_mapped_ptr = device
+                .map_memory(
+                    cbt_interior_buffer.allocation,
+                    0,
+                    (size_of::<u32>() * algorithm_data.cbt.interior.len()) as u64,
+                    vk::MemoryMapFlags::empty(),
+                )
+                .expect("Map Memory.") as *const u32;
+            let cbt_interior_mapped = std::slice::from_raw_parts(
+                cbt_interior_mapped_ptr,
+                algorithm_data.cbt.interior.len(),
+            );
+            let cbt_leaves_buffer = AllocatedBuffer::new_with_data_sized(
+                leaves_buffer_nonatomic,
+                &device,
+                mem_props,
+                vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
+                    | vk::BufferUsageFlags::TRANSFER_DST
+                    | vk::BufferUsageFlags::INDIRECT_BUFFER
+                    | vk::BufferUsageFlags::STORAGE_BUFFER,
+                vk::SharingMode::EXCLUSIVE,
+                vk::MemoryPropertyFlags::DEVICE_LOCAL
+                    | vk::MemoryPropertyFlags::HOST_VISIBLE
+                    | vk::MemoryPropertyFlags::HOST_COHERENT,
+                setup_command_buffer,
+                setup_commands_reuse_fence,
+                present_queue,
+            );
+
+            let neighbors_buffer = AllocatedBuffer::new_with_data_sized(
+                &algorithm_data.neighbors_buffer,
+                &device,
+                mem_props,
+                vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
+                    | vk::BufferUsageFlags::TRANSFER_DST
+                    | vk::BufferUsageFlags::INDIRECT_BUFFER
+                    | vk::BufferUsageFlags::STORAGE_BUFFER,
+                vk::SharingMode::EXCLUSIVE,
+                vk::MemoryPropertyFlags::DEVICE_LOCAL
+                    | vk::MemoryPropertyFlags::HOST_VISIBLE
+                    | vk::MemoryPropertyFlags::HOST_COHERENT,
+                setup_command_buffer,
+                setup_commands_reuse_fence,
+                present_queue,
+            );
+
+            let neighbors_mapped_ptr = device
+                .map_memory(
+                    neighbors_buffer.allocation,
+                    0,
+                    (size_of::<[u32; 3]>() * algorithm_data.neighbors_buffer.len()) as u64,
+                    vk::MemoryMapFlags::empty(),
+                )
+                .expect("Map Memory.") as *const [u32; 3];
+            let neighbors_mapped = std::slice::from_raw_parts(
+                neighbors_mapped_ptr,
+                algorithm_data.neighbors_buffer.len(),
+            );
+            let allocation_indices_buffer = AllocatedBuffer::new_with_data_sized(
+                &algorithm_data.allocation_indices_buffer,
+                &device,
+                mem_props,
+                vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
+                    | vk::BufferUsageFlags::TRANSFER_DST
+                    | vk::BufferUsageFlags::INDIRECT_BUFFER
+                    | vk::BufferUsageFlags::STORAGE_BUFFER,
+                vk::SharingMode::EXCLUSIVE,
+                vk::MemoryPropertyFlags::DEVICE_LOCAL
+                    | vk::MemoryPropertyFlags::HOST_VISIBLE
+                    | vk::MemoryPropertyFlags::HOST_COHERENT,
+                setup_command_buffer,
+                setup_commands_reuse_fence,
+                present_queue,
+            );
+
+            let allocation_indices_mapped_ptr = device
+                .map_memory(
+                    allocation_indices_buffer.allocation,
+                    0,
+                    (size_of::<[u32; 4]>() * algorithm_data.allocation_indices_buffer.len()) as u64,
+                    vk::MemoryMapFlags::empty(),
+                )
+                .expect("Map Memory.")
+                as *const [u32; 4];
+            let allocation_indices_mapped = std::slice::from_raw_parts(
+                allocation_indices_mapped_ptr,
+                algorithm_data.allocation_indices_buffer.len(),
+            );
+            let cbt_leaves_buffer = AllocatedBuffer::new_with_data_sized(
+                leaves_buffer_nonatomic,
+                &device,
+                mem_props,
+                vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
+                    | vk::BufferUsageFlags::TRANSFER_DST
+                    | vk::BufferUsageFlags::INDIRECT_BUFFER
+                    | vk::BufferUsageFlags::STORAGE_BUFFER,
+                vk::SharingMode::EXCLUSIVE,
+                vk::MemoryPropertyFlags::DEVICE_LOCAL
+                    | vk::MemoryPropertyFlags::HOST_VISIBLE
+                    | vk::MemoryPropertyFlags::HOST_COHERENT,
+                setup_command_buffer,
+                setup_commands_reuse_fence,
+                present_queue,
+            );
+
+            let cbt_leaves_mapped_ptr = device
+                .map_memory(
+                    cbt_leaves_buffer.allocation,
+                    0,
+                    (size_of::<u32>() * algorithm_data.cbt.leaves.len()) as u64,
+                    vk::MemoryMapFlags::empty(),
+                )
+                .expect("Map Memory.") as *const u32;
+            let cbt_leaves_mapped =
+                std::slice::from_raw_parts(cbt_leaves_mapped_ptr, algorithm_data.cbt.leaves.len());
+            let real_vertex_buffer = AllocatedBuffer::new_with_data_sized(
+                algorithm_data.vertex_buffer.as_slice(),
+                &device,
+                mem_props,
+                vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
+                    | vk::BufferUsageFlags::TRANSFER_DST
+                    | vk::BufferUsageFlags::INDIRECT_BUFFER
+                    | vk::BufferUsageFlags::STORAGE_BUFFER,
+                vk::SharingMode::EXCLUSIVE,
+                vk::MemoryPropertyFlags::DEVICE_LOCAL
+                    | vk::MemoryPropertyFlags::HOST_VISIBLE
+                    | vk::MemoryPropertyFlags::HOST_COHERENT,
+                setup_command_buffer,
+                setup_commands_reuse_fence,
+                present_queue,
+            );
+            let real_vertex_buffer_ptr = device
+                .map_memory(
+                    real_vertex_buffer.allocation,
+                    0,
+                    (size_of::<[Vec3; 3]>() * algorithm_data.vertex_buffer.len()) as u64,
+                    vk::MemoryMapFlags::empty(),
+                )
+                .expect("Map Memory.") as *const [Vec3; 3];
+            let real_vertex_buffer_mapped = std::slice::from_raw_parts(
+                real_vertex_buffer_ptr,
+                algorithm_data.vertex_buffer.len(),
+            );
+
+            let heapid_buffer = AllocatedBuffer::new_with_data_sized(
+                algorithm_data.heapid_buffer.as_slice(),
+                &device,
+                mem_props,
+                vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
+                    | vk::BufferUsageFlags::TRANSFER_DST
+                    | vk::BufferUsageFlags::INDIRECT_BUFFER
+                    | vk::BufferUsageFlags::STORAGE_BUFFER,
+                vk::SharingMode::EXCLUSIVE,
+                vk::MemoryPropertyFlags::DEVICE_LOCAL
+                    | vk::MemoryPropertyFlags::HOST_VISIBLE
+                    | vk::MemoryPropertyFlags::HOST_COHERENT,
+                setup_command_buffer,
+                setup_commands_reuse_fence,
+                present_queue,
+            );
+            let heapid_buffer_ptr = device
+                .map_memory(
+                    heapid_buffer.allocation,
+                    0,
+                    (size_of::<u32>() * algorithm_data.heapid_buffer.len()) as u64,
+                    vk::MemoryMapFlags::empty(),
+                )
+                .expect("Map Memory.") as *const u32;
+            let heapid_buffer_mapped =
+                std::slice::from_raw_parts(heapid_buffer_ptr, algorithm_data.heapid_buffer.len());
+
+            let root_bisector_vertices_buffer = AllocatedBuffer::new_with_data_sized(
+                algorithm_data.root_bisector_vertices.as_slice(),
+                &device,
+                mem_props,
+                vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
+                    | vk::BufferUsageFlags::TRANSFER_DST
+                    | vk::BufferUsageFlags::INDIRECT_BUFFER
+                    | vk::BufferUsageFlags::STORAGE_BUFFER,
+                vk::SharingMode::EXCLUSIVE,
+                vk::MemoryPropertyFlags::DEVICE_LOCAL
+                    | vk::MemoryPropertyFlags::HOST_VISIBLE
+                    | vk::MemoryPropertyFlags::HOST_COHERENT,
+                setup_command_buffer,
+                setup_commands_reuse_fence,
+                present_queue,
+            );
+            let root_bisector_vertices_buffer_ptr = device
+                .map_memory(
+                    root_bisector_vertices_buffer.allocation,
+                    0,
+                    (size_of::<[Vec3; 3]>() * algorithm_data.root_bisector_vertices.len()) as u64,
+                    vk::MemoryMapFlags::empty(),
+                )
+                .expect("Map Memory.")
+                as *const [Vec3; 3];
+            let root_bisector_vertices_buffer_mapped = std::slice::from_raw_parts(
+                root_bisector_vertices_buffer_ptr,
+                algorithm_data.root_bisector_vertices.len(),
+            );
+            let bisector_command_buffer = AllocatedBuffer::new_with_data_sized(
+                split_cmd_buffer_nonatomic,
+                &device,
+                mem_props,
+                vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
+                    | vk::BufferUsageFlags::TRANSFER_DST
+                    | vk::BufferUsageFlags::INDIRECT_BUFFER
+                    | vk::BufferUsageFlags::STORAGE_BUFFER,
+                vk::SharingMode::EXCLUSIVE,
+                vk::MemoryPropertyFlags::DEVICE_LOCAL
+                    | vk::MemoryPropertyFlags::HOST_VISIBLE
+                    | vk::MemoryPropertyFlags::HOST_COHERENT,
+                setup_command_buffer,
+                setup_commands_reuse_fence,
+                present_queue,
+            );
+            let bisector_command_buffer_ptr = device
+                .map_memory(
+                    bisector_command_buffer.allocation,
+                    0,
+                    (size_of::<u32>() * algorithm_data.bisector_split_command_buffer.len()) as u64,
+                    vk::MemoryMapFlags::empty(),
+                )
+                .expect("Map Memory.") as *const u32;
+            let bisector_command_buffer_mapped = std::slice::from_raw_parts(
+                bisector_command_buffer_ptr,
+                algorithm_data.bisector_split_command_buffer.len(),
+            );
             let scene_buffer_handles = SceneCPUHandles {
-                root_bisector_vertices: AllocatedBuffer::new_with_data_sized(
-                    &algorithm_data.root_bisector_vertices,
-                    &device,
-                    mem_props,
-                    vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
-                        | vk::BufferUsageFlags::TRANSFER_DST
-                        | vk::BufferUsageFlags::INDIRECT_BUFFER
-                        | vk::BufferUsageFlags::UNIFORM_BUFFER,
-                    vk::SharingMode::EXCLUSIVE,
-                    vk::MemoryPropertyFlags::DEVICE_LOCAL,
-                    setup_command_buffer,
-                    setup_commands_reuse_fence,
-                    present_queue,
-                ),
+                cbt_interior_mapped: cbt_interior_mapped,
+                cbt_leaves_mapped: cbt_leaves_mapped,
+                vertex_buffer_mapped: real_vertex_buffer_mapped,
+                heapid_buffer_mapped: heapid_buffer_mapped,
+                root_bisector_buffer_mapped: root_bisector_vertices_buffer_mapped,
+                root_bisector_vertices: root_bisector_vertices_buffer,
+                neighbors_buffer_mapped: neighbors_mapped,
+                allocation_indices_mapped: allocation_indices_mapped,
+                bisector_command_mapped: bisector_command_buffer_mapped,
 
-                cbt_interior: AllocatedBuffer::new_with_data_sized(
-                    &algorithm_data.cbt.interior,
-                    &device,
-                    mem_props,
-                    vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
-                        | vk::BufferUsageFlags::TRANSFER_DST
-                        | vk::BufferUsageFlags::INDIRECT_BUFFER
-                        | vk::BufferUsageFlags::STORAGE_BUFFER,
-                    vk::SharingMode::EXCLUSIVE,
-                    vk::MemoryPropertyFlags::DEVICE_LOCAL,
-                    setup_command_buffer,
-                    setup_commands_reuse_fence,
-                    present_queue,
-                ),
-
-                cbt_leaves: AllocatedBuffer::new_with_data_sized(
-                    leaves_buffer_nonatomic,
-                    &device,
-                    mem_props,
-                    vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
-                        | vk::BufferUsageFlags::TRANSFER_DST
-                        | vk::BufferUsageFlags::INDIRECT_BUFFER
-                        | vk::BufferUsageFlags::STORAGE_BUFFER,
-                    vk::SharingMode::EXCLUSIVE,
-                    vk::MemoryPropertyFlags::DEVICE_LOCAL,
-                    setup_command_buffer,
-                    setup_commands_reuse_fence,
-                    present_queue,
-                ),
+                cbt_interior: cbt_interior_buffer,
+                cbt_leaves: cbt_leaves_buffer,
 
                 bisector_state_buffer: AllocatedBuffer::new_with_data_sized(
-                    &algorithm_data.bisector_state_buffer,
+                    algorithm_data.bisector_state_buffer.as_slice(),
                     &device,
                     mem_props,
                     vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
@@ -1300,38 +1581,10 @@ impl ApplicationHandler for App {
                     present_queue,
                 ),
 
-                bisector_split_command_buffer: AllocatedBuffer::new_with_data_sized(
-                    split_cmd_buffer_nonatomic,
-                    &device,
-                    mem_props,
-                    vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
-                        | vk::BufferUsageFlags::TRANSFER_DST
-                        | vk::BufferUsageFlags::INDIRECT_BUFFER
-                        | vk::BufferUsageFlags::STORAGE_BUFFER,
-                    vk::SharingMode::EXCLUSIVE,
-                    vk::MemoryPropertyFlags::DEVICE_LOCAL,
-                    setup_command_buffer,
-                    setup_commands_reuse_fence,
-                    present_queue,
-                ),
-
-                neighbors_buffer: AllocatedBuffer::new_with_data_sized(
-                    &algorithm_data.neighbors_buffer,
-                    &device,
-                    mem_props,
-                    vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
-                        | vk::BufferUsageFlags::TRANSFER_DST
-                        | vk::BufferUsageFlags::INDIRECT_BUFFER
-                        | vk::BufferUsageFlags::STORAGE_BUFFER,
-                    vk::SharingMode::EXCLUSIVE,
-                    vk::MemoryPropertyFlags::DEVICE_LOCAL,
-                    setup_command_buffer,
-                    setup_commands_reuse_fence,
-                    present_queue,
-                ),
-
+                bisector_split_command_buffer: bisector_command_buffer,
+                neighbors_buffer: neighbors_buffer,
                 splitting_buffer: AllocatedBuffer::new_with_data_sized(
-                    &algorithm_data.splitting_buffer,
+                    algorithm_data.splitting_buffer.as_slice(),
                     &device,
                     mem_props,
                     vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
@@ -1346,7 +1599,7 @@ impl ApplicationHandler for App {
                 ),
 
                 heapid_buffer: AllocatedBuffer::new_with_data_sized(
-                    &algorithm_data.heapid_buffer,
+                    algorithm_data.heapid_buffer.as_slice(),
                     &device,
                     mem_props,
                     vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
@@ -1360,23 +1613,10 @@ impl ApplicationHandler for App {
                     present_queue,
                 ),
 
-                allocation_indices_buffer: AllocatedBuffer::new_with_data_sized(
-                    &algorithm_data.allocation_indices_buffer,
-                    &device,
-                    mem_props,
-                    vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
-                        | vk::BufferUsageFlags::TRANSFER_DST
-                        | vk::BufferUsageFlags::INDIRECT_BUFFER
-                        | vk::BufferUsageFlags::STORAGE_BUFFER,
-                    vk::SharingMode::EXCLUSIVE,
-                    vk::MemoryPropertyFlags::DEVICE_LOCAL,
-                    setup_command_buffer,
-                    setup_commands_reuse_fence,
-                    present_queue,
-                ),
+                allocation_indices_buffer: allocation_indices_buffer,
 
                 want_split_buffer: AllocatedBuffer::new_with_data_sized(
-                    &algorithm_data.want_split_buffer,
+                    algorithm_data.want_split_buffer.as_slice(),
                     &device,
                     mem_props,
                     vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
@@ -1391,7 +1631,7 @@ impl ApplicationHandler for App {
                 ),
 
                 want_merge_buffer: AllocatedBuffer::new_with_data_sized(
-                    &algorithm_data.want_merge_buffer,
+                    algorithm_data.want_merge_buffer.as_slice(),
                     &device,
                     mem_props,
                     vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
@@ -1406,7 +1646,7 @@ impl ApplicationHandler for App {
                 ),
 
                 merging_bisector_buffer: AllocatedBuffer::new_with_data_sized(
-                    &algorithm_data.merging_bisector_buffer,
+                    algorithm_data.merging_bisector_buffer.as_slice(),
                     &device,
                     mem_props,
                     vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
@@ -1420,23 +1660,9 @@ impl ApplicationHandler for App {
                     present_queue,
                 ),
 
-                vertex_buffer: AllocatedBuffer::new_with_data_sized(
-                    &algorithm_data.vertex_buffer,
-                    &device,
-                    mem_props,
-                    vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
-                        | vk::BufferUsageFlags::TRANSFER_DST
-                        | vk::BufferUsageFlags::INDIRECT_BUFFER
-                        | vk::BufferUsageFlags::STORAGE_BUFFER,
-                    vk::SharingMode::EXCLUSIVE,
-                    vk::MemoryPropertyFlags::DEVICE_LOCAL,
-                    setup_command_buffer,
-                    setup_commands_reuse_fence,
-                    present_queue,
-                ),
-
+                vertex_buffer: real_vertex_buffer,
                 curr_id_buffer: AllocatedBuffer::new_with_data_sized(
-                    &curr_id_buffer,
+                    curr_id_buffer.as_slice(),
                     &device,
                     mem_props,
                     vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
@@ -1537,7 +1763,7 @@ impl ApplicationHandler for App {
 
             let dispatch = DispatchSizeGPU {
                 draw_indirect_command: vk::DrawIndirectCommand {
-                    vertex_count: 0,
+                    vertex_count: (algorithm_data.root_bisector_vertices.len() * 3) as u32,
                     instance_count: 1,
                     first_vertex: 0,
                     first_instance: 0,
@@ -1570,13 +1796,26 @@ impl ApplicationHandler for App {
                     | vk::BufferUsageFlags::INDIRECT_BUFFER
                     | vk::BufferUsageFlags::STORAGE_BUFFER,
                 vk::SharingMode::EXCLUSIVE,
-                vk::MemoryPropertyFlags::DEVICE_LOCAL,
+                vk::MemoryPropertyFlags::DEVICE_LOCAL
+                    | vk::MemoryPropertyFlags::HOST_VISIBLE
+                    | vk::MemoryPropertyFlags::HOST_COHERENT,
                 setup_command_buffer,
                 setup_commands_reuse_fence,
                 present_queue,
             );
 
+            let dispatch_mapped_ptr = device
+                .map_memory(
+                    dispatch_buffer.allocation,
+                    0,
+                    size_of::<DispatchSizeGPU>() as u64,
+                    vk::MemoryMapFlags::empty(),
+                )
+                .expect("Map Memory.")
+                as *const DispatchSizeGPU;
+            let dispatch_mapped = dispatch_mapped_ptr.as_ref().unwrap();
             self.state = Some(State {
+                dispatch_mapped: dispatch_mapped,
                 window: window,
                 instance: instance,
                 device: device,
@@ -1614,9 +1853,9 @@ impl ApplicationHandler for App {
                 scene_buffer_handles,
 
                 camera: CameraState {
-                    pos: Vec3::new(2.0, 2.0, 2.0),
-                    pitch: PI / 2.0,
-                    yaw: 0.0,
+                    pos: Vec3::new(0.037982415, -0.22862579, -0.11457044),
+                    pitch: 3.0707946,
+                    yaw: -3.4999974,
                 },
             })
         }

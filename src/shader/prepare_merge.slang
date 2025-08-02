@@ -23,7 +23,7 @@ void prepare_merge(
     uint next_depth = heap_id_depth(next_heapid);
     TriState next_state = bisector_state_buffer[next_id];
 
-    if (next_depth != curr_depth || next_state != SIMPLIFY)
+    if (next_depth != curr_depth || next_state != TriState::SIMPLIFY_ELEMENT)
     {
         return;
     }
@@ -34,7 +34,7 @@ void prepare_merge(
     uint twin_highid = next_neighbors[NEXT];
     uint twin_lowid = curr_neighbors[PREV];
 
-    if (twin_lowid != 0xFFFFFFFF)
+    if (twin_lowid != INVALID_INDEX)
     {
         uint twin_low_heapid = heap_id_buffer[twin_lowid];
         uint twin_high_heapid = heap_id_buffer[twin_highid];
@@ -64,7 +64,7 @@ void prepare_merge(
     }
 
     // Remove reference from NEXT’s twin to NEXT (points back to curr)
-    if (next_neighbors[TWIN] != 0xFFFFFFFF)
+    if (next_neighbors[TWIN] != INVALID_INDEX)
     {
         uint next_twin_id = next_neighbors[TWIN];
         uint3 next_twin_neighbors = neighbor_buffer[next_twin_id];
@@ -80,7 +80,7 @@ void prepare_merge(
         simplification_buffer[base_slot + 1] = twin_highid;
 
         uint3 twin_low_neighbors = neighbor_buffer[twin_lowid];
-        if (twin_low_neighbors[TWIN] != 0xFFFFFFFF)
+        if (twin_low_neighbors[TWIN] != INVALID_INDEX)
         {
             uint twin_low_twin_id = twin_low_neighbors[TWIN];
             uint3 twin_low_twin_neighbors = neighbor_buffer[twin_low_twin_id];

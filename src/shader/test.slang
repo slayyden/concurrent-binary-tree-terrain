@@ -1,4 +1,4 @@
-#include "common.slang"
+#include "cbt.slang"
 
 // Vertex shader to pixel shader
 struct v2p
@@ -30,13 +30,9 @@ v2p vertexMain(uint vid: SV_VertexID)
     }
     else if (state == TriState::SIMPLIFY_ELEMENT)
     {
-        color = float3(0.0, 0.0, 1.0);
+        color = float3(0.0, 1.0, 1.0);
     }
-    else if (state == TriState::BACK_FACE_CULLED)
-    {
-
-        color = float3(1.0, 0.0, 1.0);
-    }
+    color = colors[vid % 3];
     float4 pos = float4(pc.scene.vertex_buffer[vid], 1);
     // pos.y = -pos.y;
     // pos = mul(pos, pc.view_project);

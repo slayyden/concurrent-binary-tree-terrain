@@ -11,7 +11,7 @@ float3[3] heapid_to_vertices(
     let depth = heap_id_depth(heapid);
     let num_split_code_bits = depth - base_level;
 
-    let heapid_without_tag = !(1 << depth) & heapid;
+    let heapid_without_tag = (~(1 << depth)) & heapid;
     let root_bisector_index = heapid_without_tag >> num_split_code_bits;
     let split_code = (~(0xFFFF_FFFF << num_split_code_bits)) & heapid;
 
@@ -19,7 +19,7 @@ float3[3] heapid_to_vertices(
                                 root_bisector_vertices[root_bisector_index * 3 + 1],
                                 root_bisector_vertices[root_bisector_index * 3 + 2] };
 
-    var peak_idx = 2;
+    uint peak_idx = 2;
     for (int i = depth - base_level - 1; i >= 0; --i)
     {
         let bit = (split_code >> i) & 0b0000_0000_0000_0001;
@@ -46,7 +46,8 @@ void vertex_compute(uint3 tid: SV_DispatchThreadID)
 
     let curr_id = one_bit_to_id(tid.x);
     let heapid = pc.scene.heapid_buffer[curr_id];
-    let vertices_slot = pc.dispatch.vertex_buffer_count.add(1);
+    // let vertices_slot = pc.dispatch.vertex_buffer_count.add(1);
+    let vertices_slot = tid.x;
     let triangle = heapid_to_vertices(heapid);
 
     // displace verts here

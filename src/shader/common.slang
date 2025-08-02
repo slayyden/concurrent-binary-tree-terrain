@@ -65,7 +65,7 @@ struct DispatchData
     DispatchIndirectCommand dispatch_vertex_compute_command;
 
     // written at
-    Atomic<uint> remaining_memory_count;
+    Atomic<int> remaining_memory_count;
     Atomic<uint> allocation_counter;
     Atomic<uint> want_split_buffer_count;
     Atomic<uint> splitting_buffer_count;
@@ -94,10 +94,6 @@ static const uint INVALID_INDEX = 0xFFFF_FFFF;
 static const uint num_leaves = 4096;
 static const uint num_internal = 2 * num_leaves - 1;
 
-static const uint UNCHANGED_ELEMENT = 0;
-static const uint SIMPLIFY = 1;
-static const uint SPLIT = 2;
-
 static const uint NO_SPLIT = 0;
 static const uint CENTER_SPLIT = 1;
 static const uint RIGHT_SPLIT = 1 << 1;
@@ -125,7 +121,15 @@ ConstantBuffer<PushConstant> pc;
 
 uint heap_id_depth(uint heapid)
 {
-    return firstbithigh(heapid) + 1;
+    // return firstbithigh(heapid);
+    var x = heapid;
+    uint depth = 0;
+    while (x > 0u)
+    {
+        ++depth;
+        x >>= 1u;
+    }
+    return depth - 1;
 }
 
 // Given current ID and neighbor's neighbors, find edge type

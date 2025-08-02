@@ -40,8 +40,8 @@ void reset(uint3 tid: SV_DispatchThreadID)
         return;
     }
     let dispatch = pc.dispatch;
-    dispatch.draw_indirect_command.vertex_count = 0;
-    dispatch.remaining_memory_count = (1 << 17) - dispatch.num_allocated_blocks;
+    // dispatch.draw_indirect_command.vertex_count = 0;
+    dispatch.remaining_memory_count = (1 << 17) - pc.scene.cbt_interior[0];
 
     dispatch.allocation_counter.store(0);
     dispatch.want_split_buffer_count.store(0);

@@ -1070,7 +1070,17 @@ pub struct SceneDataGPU {
     pub cbt_depth: u32,
 }
 
-pub struct SceneCPUHandles {
+pub struct SceneCPUHandles<'a> {
+    // dbg
+    pub cbt_interior_mapped: &'a [u32],
+    pub cbt_leaves_mapped: &'a [u32],
+    pub vertex_buffer_mapped: &'a [[Vec3; 3]],
+    pub heapid_buffer_mapped: &'a [u32],
+    pub root_bisector_buffer_mapped: &'a [[Vec3; 3]],
+    pub neighbors_buffer_mapped: &'a [[u32; 3]],
+    pub allocation_indices_mapped: &'a [[u32; 4]],
+    pub bisector_command_mapped: &'a [u32],
+
     // written once at initialization
     pub root_bisector_vertices: AllocatedBuffer,
     // our concurrent binary tree
@@ -1120,7 +1130,7 @@ pub struct SceneCPUHandles {
     pub curr_id_buffer: AllocatedBuffer,
 }
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct DispatchSizeGPU {
     // written to by reduce
     pub draw_indirect_command: vk::DrawIndirectCommand,
@@ -1382,7 +1392,7 @@ impl PipelineData {
         self.bisector_state_buffer = self.bisector_state_buffer.iter_mut().map(|_| 0).collect();
     }
 }
-
+#[derive(Debug)]
 pub struct CameraState {
     pub pos: Vec3,
     // pitch (0, pi)

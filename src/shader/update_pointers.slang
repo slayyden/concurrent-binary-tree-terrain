@@ -21,7 +21,7 @@ uint2 get_edge_slots(uint command, uint edge_type)
 {
     if (command == 0) // NO_SPLIT
         return uint2(0, 0);
-    return COMMAND_EDGE_LUT[command >> 1][edge_type];
+    return (COMMAND_EDGE_LUT[command >> 1])[edge_type];
 }
 
 // Child edge type LUT
@@ -40,14 +40,14 @@ static const uint2 CHILD_EDGE_TYPE_LUT[4][3] = {
 // return the types of the children’s edges corresponding to that edge
 uint2 get_child_edge_types(uint command, uint parent_edge_type)
 {
-    return CHILD_EDGE_TYPE_LUT[command >> 1][parent_edge_type];
+    return (CHILD_EDGE_TYPE_LUT[command >> 1])[parent_edge_type];
 }
 
 // Link sibling edges by updating their neighbor buffer entries
 void link_siblings(uint prev_sibling, uint next_sibling)
 {
-    pc.scene.neighbors_buffer[prev_sibling][NEXT] = next_sibling;
-    pc.scene.neighbors_buffer[next_sibling][PREV] = prev_sibling;
+    (pc.scene.neighbors_buffer[prev_sibling])[NEXT] = next_sibling;
+    (pc.scene.neighbors_buffer[next_sibling])[PREV] = prev_sibling;
 }
 
 [shader("compute")]
@@ -56,11 +56,11 @@ void update_pointers(
     int3 tid: SV_DispatchThreadID)
 {
 
-    if (tid.x >= pc.dispatch.merging_bisector_count.load())
+    if (tid.x >= pc.dispatch.splitting_buffer_count.load())
     {
         return;
     }
-    let curr_id = pc.scene.merging_bisector_buffer[tid.x];
+    let curr_id = pc.scene.splitting_buffer[tid.x];
     let heap_id_buffer = pc.scene.heapid_buffer;
     let allocation_indices_buffer = pc.scene.allocation_indices_buffer;
     let bisector_command_buffer = pc.scene.bisector_split_command_buffer;
@@ -94,7 +94,7 @@ void update_pointers(
             { // NO_SPLIT
                 if (curr_id != slot)
                 {
-                    neighbor_buffer[neighbor_index][neighbor_edge] = slot;
+                    (neighbor_buffer[neighbor_index])[neighbor_edge] = slot;
                 }
                 neighbor_slot = neighbor_index;
             }
@@ -113,7 +113,7 @@ void update_pointers(
             uint slot2 = curr_allocation_indices[bisector_slots[1]];
             uint edge_type2 = edge_types[1];
             uint neighbor_slot2 = neighbor_allocation_indices[neighbor_slots[0]];
-            neighbor_buffer[slot2][edge_type2] = neighbor_slot2;
+            (neighbor_buffer[slot2])[edge_type2] = neighbor_slot2;
         }
     }
 
@@ -127,8 +127,8 @@ void update_pointers(
     else if (curr_command == RIGHT_DOUBLE_SPLIT)
     {
         link_siblings(curr_allocation_indices[0], curr_allocation_indices[2]);
-        neighbor_buffer[curr_allocation_indices[0]][TWIN] = curr_allocation_indices[1];
-        neighbor_buffer[curr_allocation_indices[1]][PREV] = curr_allocation_indices[0];
+        (neighbor_buffer[curr_allocation_indices[0]])[TWIN] = curr_allocation_indices[1];
+        (neighbor_buffer[curr_allocation_indices[1]])[PREV] = curr_allocation_indices[0];
 
         heap_id_buffer[curr_allocation_indices[1]] = 2 * curr_heapid;
         heap_id_buffer[curr_allocation_indices[2]] = 4 * curr_heapid + 2;
@@ -137,8 +137,8 @@ void update_pointers(
     else if (curr_command == LEFT_DOUBLE_SPLIT)
     {
         link_siblings(curr_allocation_indices[1], curr_allocation_indices[2]);
-        neighbor_buffer[curr_allocation_indices[2]][TWIN] = curr_allocation_indices[0];
-        neighbor_buffer[curr_allocation_indices[0]][NEXT] = curr_allocation_indices[2];
+        (neighbor_buffer[curr_allocation_indices[2]])[TWIN] = curr_allocation_indices[0];
+        (neighbor_buffer[curr_allocation_indices[0]])[NEXT] = curr_allocation_indices[2];
 
         heap_id_buffer[curr_allocation_indices[0]] = 2 * curr_heapid + 1;
         heap_id_buffer[curr_allocation_indices[2]] = 4 * curr_heapid + 0;
@@ -149,8 +149,8 @@ void update_pointers(
         // TRIPLE_SPLIT
         link_siblings(curr_allocation_indices[1], curr_allocation_indices[3]);
         link_siblings(curr_allocation_indices[0], curr_allocation_indices[2]);
-        neighbor_buffer[curr_allocation_indices[3]][TWIN] = curr_allocation_indices[0];
-        neighbor_buffer[curr_allocation_indices[0]][TWIN] = curr_allocation_indices[3];
+        (neighbor_buffer[curr_allocation_indices[3]])[TWIN] = curr_allocation_indices[0];
+        (neighbor_buffer[curr_allocation_indices[0]])[TWIN] = curr_allocation_indices[3];
 
         heap_id_buffer[curr_allocation_indices[3]] = 4 * curr_heapid + 0;
         heap_id_buffer[curr_allocation_indices[1]] = 4 * curr_heapid + 1;
@@ -162,7 +162,7 @@ void update_pointers(
     unset_bit(curr_id);
     for (int i = 0; i < 4; ++i)
     {
-        if (curr_allocation_indices[i] != 0xFFFFFFFF)
+        if (curr_allocation_indices[i] != INVALID_INDEX)
         {
             set_bit(curr_allocation_indices[i]);
         }

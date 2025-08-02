@@ -5,6 +5,6 @@
 void dispatch_allocate()
 {
     pc.dispatch.dispatch_allocate_command.x = div_ceil(
-        pc.dispatch.allocation_counter.load(),
+        pc.dispatch.splitting_buffer_count.load(),
         WORKGROUP_SIZE);
 }
