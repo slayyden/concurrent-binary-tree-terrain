@@ -259,7 +259,6 @@ impl<'a> State<'a> {
             };
 
             global_memory_barrier();
-
             // set up indirect buffer for splitting
             dev.cmd_bind_pipeline(
                 *cmdbuf,
@@ -351,7 +350,6 @@ impl<'a> State<'a> {
                 offset_of!(DispatchSizeGPU, dispatch_prepare_merge_command) as u64,
             );
             global_memory_barrier();
-
             // reduce
             dev.cmd_bind_pipeline(
                 *cmdbuf,
@@ -514,7 +512,8 @@ impl<'a> State<'a> {
                     .queue_present(self.present_queue, &present_info)
                     .unwrap();
             }
-
+            // TODO: UNDO THIS
+            dev.device_wait_idle().expect("Wait Idle");
             // WARNING: WE CANNOT RETURN EARLY BECAUSE OF THIS
             println!(
                 "interior0: {:?}",
@@ -551,7 +550,7 @@ impl<'a> State<'a> {
             println!("dispatch: {:?}", *self.dispatch_mapped);
             println!("leaf: {:b}", self.scene_buffer_handles.cbt_leaves_mapped[0]);
 
-            for i in 0..(self.scene_buffer_handles.cbt_interior_mapped[0] * 2) {
+            for i in 0..(self.scene_buffer_handles.cbt_interior_mapped[0]) {
                 let i = i as usize;
                 println!("i: {:?}", i);
                 println!(
@@ -1501,6 +1500,11 @@ impl<'a> ApplicationHandler for App<'a> {
                 algorithm_data.splitting_buffer.len(),
             );
 
+            println!(
+                "heapid length: {:?}",
+                algorithm_data.heapid_buffer.as_slice().len()
+            );
+            debug_assert!(algorithm_data.heapid_buffer[0] == 0b1000);
             let heapid_buffer = AllocatedBuffer::new_with_data_sized(
                 algorithm_data.heapid_buffer.as_slice(),
                 &device,
@@ -1618,20 +1622,7 @@ impl<'a> ApplicationHandler for App<'a> {
                 bisector_split_command_buffer: bisector_command_buffer,
                 neighbors_buffer: neighbors_buffer,
                 splitting_buffer: splitting_buffer,
-                heapid_buffer: AllocatedBuffer::new_with_data_sized(
-                    algorithm_data.heapid_buffer.as_slice(),
-                    &device,
-                    mem_props,
-                    vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
-                        | vk::BufferUsageFlags::TRANSFER_DST
-                        | vk::BufferUsageFlags::INDIRECT_BUFFER
-                        | vk::BufferUsageFlags::STORAGE_BUFFER,
-                    vk::SharingMode::EXCLUSIVE,
-                    vk::MemoryPropertyFlags::DEVICE_LOCAL,
-                    setup_command_buffer,
-                    setup_commands_reuse_fence,
-                    present_queue,
-                ),
+                heapid_buffer: heapid_buffer,
 
                 allocation_indices_buffer: allocation_indices_buffer,
 
@@ -1743,7 +1734,9 @@ impl<'a> ApplicationHandler for App<'a> {
                     .device_address(&device),
 
                 // split
-                want_split_buffer: scene_buffer_handles.heapid_buffer.device_address(&device),
+                want_split_buffer: scene_buffer_handles
+                    .want_split_buffer
+                    .device_address(&device),
 
                 // prepare merge
                 want_merge_buffer: scene_buffer_handles
@@ -1942,206 +1935,6 @@ impl<'a> ApplicationHandler for App<'a> {
                     },
                 ..
             } => match key.as_ref() {
-                Key::Character("S") => {
-                    // let split_slots = [1, 7, 9, 14, 19];
-                    // let split_slots = [1, 7, 9, 14, 16];
-                    // if state.iteration_counter < split_slots.len() as u32 {
-                    // let slot = split_slots[state.iteration_counter as usize];
-                    let slots = [
-                        state.algorithm_data.cbt.one_bit_to_id(
-                            state.iteration_counter % state.algorithm_data.cbt.interior[0],
-                        ),
-                        (state.algorithm_data.cbt.one_bit_to_id(
-                            (state.iteration_counter + 1) % state.algorithm_data.cbt.interior[0],
-                        )),
-                        (state.algorithm_data.cbt.one_bit_to_id(
-                            (state.iteration_counter + 2) % state.algorithm_data.cbt.interior[0],
-                        )),
-                        (state.algorithm_data.cbt.one_bit_to_id(
-                            (state.iteration_counter + 3) % state.algorithm_data.cbt.interior[0],
-                        )),
-                    ];
-                    let slots: Vec<u32> = slots
-                        .into_iter()
-                        .filter(|x| {
-                            state.algorithm_data.heapid_buffer[*x as usize] & (1 << 31) == 0
-                        })
-                        .collect();
-                    // println!("Refining tri and at slot {:?}", slot);
-                    for slot in slots.iter() {
-                        let leaf = state.algorithm_data.cbt.leaves[(slot / 32) as usize]
-                            .load(Ordering::Relaxed);
-                        // println!("Leaf: {:b}", leaf);
-                        debug_assert!(leaf & (1 << (slot % 32)) != 0);
-                    }
-
-                    state
-                        .algorithm_data
-                        .want_split_buffer_count
-                        .fetch_add(slots.len() as u32, Ordering::Relaxed);
-                    for (i, slot) in slots.iter().enumerate() {
-                        state.algorithm_data.want_split_buffer[i] = *slot;
-                    }
-                    state.algorithm_data.iterate();
-                    state.iteration_counter += 1;
-                    state.algorithm_data.reset();
-                    debug_assert!(
-                        state
-                            .algorithm_data
-                            .want_split_buffer_count
-                            .load(Ordering::Relaxed)
-                            == 0
-                    );
-                    // }
-                    let vertex_buffer_size =
-                        (size_of::<[Vec3; 3]>() * state.algorithm_data.vertex_buffer.len()) as u64;
-                    unsafe {
-                        let mut staging_buffer_slice = Align::new(
-                            state.vertex_staging_buffer_ptr,
-                            align_of::<f32>() as u64,
-                            vertex_buffer_size,
-                        );
-                        staging_buffer_slice
-                            .copy_from_slice(state.algorithm_data.vertex_buffer.as_slice());
-
-                        let ids_buffer_size = (64 * size_of::<u32>()) as u64;
-                        let mut staging_buffer_slice = Align::new(
-                            state.curr_ids_staging_buffer_ptr,
-                            align_of::<f32>() as u64,
-                            ids_buffer_size,
-                        );
-                        let curr_ids_buffer: Vec<u32> = (0..state.algorithm_data.cbt.interior[0])
-                            .map(|tid| min(state.algorithm_data.cbt.one_bit_to_id(tid), 64))
-                            .collect();
-                        println!("curr_ids_buffer: {:?}", curr_ids_buffer);
-                        staging_buffer_slice.copy_from_slice(curr_ids_buffer.as_slice());
-                        // WARNING: THERES NO SYNCHRONIZATION HERE
-                        // initialization command buffer
-                        record_submit_commandbuffer(
-                            &state.device,
-                            state.setup_command_buffer,
-                            state.setup_commands_reuse_fence,
-                            state.present_queue,
-                            &[],
-                            &[],
-                            &[],
-                            |device, setup_command_buffer| {
-                                let vertex_copy =
-                                    vk::BufferCopy::default().size(vertex_buffer_size);
-                                device.cmd_copy_buffer(
-                                    setup_command_buffer,
-                                    state.vertex_staging_buffer.buffer,
-                                    state.vertex_buffer.buffer,
-                                    &[vertex_copy],
-                                );
-
-                                let ids_copy = vk::BufferCopy::default().size(ids_buffer_size);
-                                device.cmd_copy_buffer(
-                                    setup_command_buffer,
-                                    state.curr_ids_staging_buffer.buffer,
-                                    state.curr_ids_buffer.buffer,
-                                    &[ids_copy],
-                                );
-                            },
-                        );
-                    }
-                }
-                Key::Character("M") => {
-                    // let split_slots = [1, 7, 9, 14, 19];
-                    // let split_slots = [1, 7, 9, 14, 16];
-                    // if state.iteration_counter < split_slots.len() as u32 {
-                    // let slot = split_slots[state.iteration_counter as usize];
-                    let slots: Vec<u32> = (0..(state.algorithm_data.cbt.interior[0]))
-                        .map(|tid| state.algorithm_data.cbt.one_bit_to_id(tid))
-                        .filter(|slot_idx| {
-                            let heapid = state.algorithm_data.heapid_buffer[*slot_idx as usize];
-                            if heap_id_depth(heapid) == state.algorithm_data.base_depth {
-                                return false;
-                            }
-                            state.algorithm_data.bisector_state_buffer[*slot_idx as usize] =
-                                SIMPLIFY;
-                            if heapid % 2 != 1 {
-                                return false;
-                            }
-                            return true;
-                        })
-                        .collect();
-
-                    println!("num_slots: {:?}", slots.len());
-
-                    state
-                        .algorithm_data
-                        .want_merge_buffer_count
-                        .fetch_add(slots.len() as u32, Ordering::Relaxed);
-                    for (i, slot) in slots.iter().enumerate() {
-                        state.algorithm_data.want_merge_buffer[i] = *slot;
-                    }
-                    state.algorithm_data.iterate();
-                    state.iteration_counter += 1;
-                    state.algorithm_data.reset();
-                    let vertex_buffer_size =
-                        (size_of::<[Vec3; 3]>() * state.algorithm_data.vertex_buffer.len()) as u64;
-                    unsafe {
-                        let mut staging_buffer_slice = Align::new(
-                            state.vertex_staging_buffer_ptr,
-                            align_of::<f32>() as u64,
-                            vertex_buffer_size,
-                        );
-                        staging_buffer_slice
-                            .copy_from_slice(state.algorithm_data.vertex_buffer.as_slice());
-
-                        let ids_buffer_size = (64 * size_of::<u32>()) as u64;
-                        let mut staging_buffer_slice = Align::new(
-                            state.curr_ids_staging_buffer_ptr,
-                            align_of::<f32>() as u64,
-                            ids_buffer_size,
-                        );
-                        let curr_ids_buffer: Vec<u32> = (0..state.algorithm_data.cbt.interior[0])
-                            .map(|tid| min(state.algorithm_data.cbt.one_bit_to_id(tid), 64))
-                            .collect();
-                        // println!("curr_ids_buffer: {:?}", curr_ids_buffer);
-                        staging_buffer_slice.copy_from_slice(curr_ids_buffer.as_slice());
-                        // WARNING: THERES NO SYNCHRONIZATION HERE
-                        // initialization command buffer
-                        record_submit_commandbuffer(
-                            &state.device,
-                            state.setup_command_buffer,
-                            state.setup_commands_reuse_fence,
-                            state.present_queue,
-                            &[],
-                            &[],
-                            &[],
-                            |device, setup_command_buffer| {
-                                let vertex_copy =
-                                    vk::BufferCopy::default().size(vertex_buffer_size);
-                                device.cmd_copy_buffer(
-                                    setup_command_buffer,
-                                    state.vertex_staging_buffer.buffer,
-                                    state.vertex_buffer.buffer,
-                                    &[vertex_copy],
-                                );
-
-                                let ids_copy = vk::BufferCopy::default().size(ids_buffer_size);
-                                device.cmd_copy_buffer(
-                                    setup_command_buffer,
-                                    state.curr_ids_staging_buffer.buffer,
-                                    state.curr_ids_buffer.buffer,
-                                    &[ids_copy],
-                                );
-                            },
-                        );
-                    }
-                }
-                Key::Character("N") => {
-                    for i in 0..state.algorithm_data.cbt.interior[0] {
-                        let curr_id = state.algorithm_data.cbt.one_bit_to_id(i);
-                        println!("curr_id : {:?}", curr_id);
-                        println!(
-                            "neighbors: {:?}",
-                            state.algorithm_data.neighbors_buffer[curr_id as usize]
-                        );
-                    }
-                }
                 Key::Character("w") => {
                     state.camera.pos += state.camera.lookdir() * 0.3;
                 }

@@ -11,7 +11,7 @@ void merge(
     let curr_id = pc.scene.merging_bisector_buffer[tid.x];
     let neighbor_buffer = pc.scene.neighbors_buffer;
     let heap_id_buffer = pc.scene.heapid_buffer;
-    uint curr_heapid = heap_id_buffer[curr_id]; // even guaranteed
+    uint curr_heapid = heap_id_buffer[curr_id]; // odd guaranteed
     uint3 curr_neighbors = neighbor_buffer[curr_id];
 
     uint next_id = curr_neighbors[NEXT];

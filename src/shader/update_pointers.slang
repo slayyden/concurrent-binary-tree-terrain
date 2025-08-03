@@ -55,7 +55,6 @@ void link_siblings(uint prev_sibling, uint next_sibling)
 void update_pointers(
     int3 tid: SV_DispatchThreadID)
 {
-
     if (tid.x >= pc.dispatch.splitting_buffer_count.load())
     {
         return;
@@ -65,11 +64,11 @@ void update_pointers(
     let allocation_indices_buffer = pc.scene.allocation_indices_buffer;
     let bisector_command_buffer = pc.scene.bisector_split_command_buffer;
     let neighbor_buffer = pc.scene.neighbors_buffer;
-    uint curr_heapid = heap_id_buffer[curr_id];
-    uint curr_command = bisector_command_buffer[curr_id];
+    let curr_heapid = heap_id_buffer[curr_id];
+    let curr_command = bisector_command_buffer[curr_id];
 
-    uint3 neighbors = neighbor_buffer[curr_id];
-    uint4 curr_allocation_indices = pc.scene.allocation_indices_buffer[curr_id];
+    let neighbors = neighbor_buffer[curr_id];
+    let curr_allocation_indices = pc.scene.allocation_indices_buffer[curr_id];
 
     // Clear current bit and set new ones
     unset_bit(curr_id);
@@ -85,22 +84,6 @@ void update_pointers(
             break;
         }
     }
-    /*
-     if (tid.x == 0)
-     {
-         for (int i = 0; i < 4; ++i)
-         {
-             let allocation_index = curr_allocation_indices[i];
-             if (allocation_index != INVALID_INDEX)
-             {
-                 set_bit(allocation_index);
-             }
-             else
-             {
-                 break;
-             }
-         }
-     }*/
 
     // Loop over each edge (NEXT, PREV, TWIN)
     for (uint bisector_edge_idx = 0; bisector_edge_idx < 3; ++bisector_edge_idx)
@@ -151,9 +134,10 @@ void update_pointers(
     // Write intra-bisector pointers and heap IDs
     if (curr_command == CENTER_SPLIT)
     {
-        link_siblings(curr_allocation_indices[0], curr_allocation_indices[1]);
         heap_id_buffer[curr_allocation_indices[1]] = 2 * curr_heapid + 0;
         heap_id_buffer[curr_allocation_indices[0]] = 2 * curr_heapid + 1;
+
+        link_siblings(curr_allocation_indices[0], curr_allocation_indices[1]);
     }
     else if (curr_command == RIGHT_DOUBLE_SPLIT)
     {
