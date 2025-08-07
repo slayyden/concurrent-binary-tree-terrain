@@ -26,5 +26,6 @@ void allocate(
         allocation_indices[i] = child_id;
     }
     pc.scene.allocation_indices_buffer[curr_id] = allocation_indices;
+    pc.scene.bisector_state_buffer[curr_id] = TriState::BISECT_ELEMENT;
 }
 

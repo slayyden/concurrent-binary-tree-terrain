@@ -230,19 +230,6 @@ impl<'a> State<'a> {
                 byteslice(&push_constants),
             );
 
-            // COMPUTE
-            // classify
-            dev.cmd_bind_pipeline(
-                *cmdbuf,
-                vk::PipelineBindPoint::COMPUTE,
-                self.scene_buffer_handles.classify_pipeline,
-            );
-
-            dev.cmd_dispatch_indirect(
-                *cmdbuf,
-                self.dispatch_buffer.buffer,
-                offset_of!(DispatchSizeGPU, dispatch_vertex_compute_command) as u64,
-            );
             let memory_barrier = vk::MemoryBarrier::default()
                 .src_access_mask(vk::AccessFlags::SHADER_WRITE)
                 .dst_access_mask(vk::AccessFlags::SHADER_READ);
@@ -257,6 +244,20 @@ impl<'a> State<'a> {
                     &[],
                 )
             };
+
+            // COMPUTE
+            // classify
+            dev.cmd_bind_pipeline(
+                *cmdbuf,
+                vk::PipelineBindPoint::COMPUTE,
+                self.scene_buffer_handles.classify_pipeline,
+            );
+
+            dev.cmd_dispatch_indirect(
+                *cmdbuf,
+                self.dispatch_buffer.buffer,
+                offset_of!(DispatchSizeGPU, dispatch_vertex_compute_command) as u64,
+            );
 
             global_memory_barrier();
             // set up indirect buffer for splitting
@@ -357,7 +358,28 @@ impl<'a> State<'a> {
                 self.scene_buffer_handles.reduce_pipeline,
             );
             dev.cmd_dispatch(*cmdbuf, 1, 1, 1);
+
+            dev.cmd_pipeline_barrier(
+                *cmdbuf,
+                vk::PipelineStageFlags::COMPUTE_SHADER,
+                vk::PipelineStageFlags::COMPUTE_SHADER,
+                vk::DependencyFlags::empty(),
+                &[memory_barrier],
+                &[],
+                &[],
+            );
+            // global_memory_barrier();
+            /*
+            // post reduce
+            dev.cmd_bind_pipeline(
+                *cmdbuf,
+                vk::PipelineBindPoint::COMPUTE,
+                self.scene_buffer_handles.post_reduce_pipeline,
+            );
+            dev.cmd_dispatch(*cmdbuf, 1, 1, 1);
             global_memory_barrier();
+            */
+
             // vertex compute
             dev.cmd_bind_pipeline(
                 *cmdbuf,
@@ -370,6 +392,18 @@ impl<'a> State<'a> {
                 offset_of!(DispatchSizeGPU, dispatch_vertex_compute_command) as u64,
             );
             global_memory_barrier();
+            let graphics_barrier = vk::MemoryBarrier::default()
+                .src_access_mask(vk::AccessFlags::SHADER_WRITE)
+                .dst_access_mask(vk::AccessFlags::INDIRECT_COMMAND_READ);
+            dev.cmd_pipeline_barrier(
+                *cmdbuf,
+                vk::PipelineStageFlags::COMPUTE_SHADER,
+                vk::PipelineStageFlags::DRAW_INDIRECT,
+                vk::DependencyFlags::empty(),
+                &[graphics_barrier],
+                &[],
+                &[],
+            );
             dev.cmd_begin_rendering(*cmdbuf, &rendering_info);
 
             // RENDERING CORE
@@ -407,6 +441,7 @@ impl<'a> State<'a> {
                 ],
             );
 
+            // draw the triangles
             dev.cmd_draw_indirect(
                 *cmdbuf,
                 self.dispatch_buffer.buffer,
@@ -414,7 +449,6 @@ impl<'a> State<'a> {
                 1,
                 0,
             );
-            // dev.cmd_draw(*cmdbuf, 18, 1, 0, 0);
 
             dev.cmd_end_rendering(*cmdbuf);
 
@@ -515,6 +549,9 @@ impl<'a> State<'a> {
             // TODO: UNDO THIS
             dev.device_wait_idle().expect("Wait Idle");
             // WARNING: WE CANNOT RETURN EARLY BECAUSE OF THIS
+            println!("START");
+            println!("draw: {:?}", self.dispatch_mapped.draw_indirect_command);
+            println!("dispatch: {:?}", *self.dispatch_mapped);
             println!(
                 "interior0: {:?}",
                 self.scene_buffer_handles.cbt_interior_mapped[0]
@@ -543,48 +580,103 @@ impl<'a> State<'a> {
                 "interior6: {:?}",
                 self.scene_buffer_handles.cbt_interior_mapped[63]
             );
+            let allocation_indices = self.scene_buffer_handles.allocation_indices_mapped[0];
+            println!("allocation0: {:?}", allocation_indices,);
             println!(
-                "interior4: {:?}",
-                self.scene_buffer_handles.cbt_interior_mapped[4095]
+                "leaf0: {:b}",
+                self.scene_buffer_handles.cbt_leaves_mapped[0]
+            );
+            println!(
+                "heapid0: {:b}",
+                self.scene_buffer_handles.heapid_buffer_mapped[0]
+            );
+            println!(
+                "vertices0: {:?}",
+                self.scene_buffer_handles.vertex_buffer_mapped[0]
+            );
+            if allocation_indices[0] != u32::MAX {
+                println!(
+                    "leafnext: {:b}",
+                    self.scene_buffer_handles.cbt_leaves_mapped
+                        [(allocation_indices[0] / 32) as usize]
+                );
+                let curr_heapid =
+                    self.scene_buffer_handles.heapid_buffer_mapped[allocation_indices[0] as usize];
+                println!("heapid: {:b}", curr_heapid);
+                let mut vertex_index: u32 = 0;
+                for heapid in self.scene_buffer_handles.heapid_buffer_mapped {
+                    if *heapid == curr_heapid {
+                        break;
+                    }
+                    if *heapid != 0 {
+                        vertex_index += 1;
+                    }
+                }
+                println!("vertex_index: {:?}", vertex_index);
+                println!(
+                    "vertices: {:?}",
+                    self.scene_buffer_handles.vertex_buffer_mapped[vertex_index as usize]
+                );
+            }
+            println!("END");
+            /*
+            let sum: u32 = self
+                .scene_buffer_handles
+                .cbt_leaves_mapped
+                .into_iter()
+                .map(|x| x.count_ones())
+                .sum();
+            debug_assert!(sum == self.scene_buffer_handles.cbt_interior_mapped[0]); */
+
+            /*
+            println!(
+            "interior4: {:?}",
+            self.scene_buffer_handles.cbt_interior_mapped[4095]
             );
             println!("dispatch: {:?}", *self.dispatch_mapped);
             println!("leaf: {:b}", self.scene_buffer_handles.cbt_leaves_mapped[0]);
+            println!(
+            "merging_buffer: {:?}, {:?}, {:?}",
+            self.scene_buffer_handles.merging_buffer_mapped[0],
+            self.scene_buffer_handles.merging_buffer_mapped[1],
+            self.scene_buffer_handles.merging_buffer_mapped[2]
+            );
 
-            for i in 0..(self.scene_buffer_handles.cbt_interior_mapped[0]) {
-                let i = i as usize;
-                println!("i: {:?}", i);
-                println!(
-                    "vertex: {:?}",
-                    self.scene_buffer_handles.vertex_buffer_mapped[i],
-                );
-                println!(
-                    "heapid: {:b}",
-                    self.scene_buffer_handles.heapid_buffer_mapped[i],
-                );
-                println!(
-                    "neighbors: {:?}",
-                    self.scene_buffer_handles.neighbors_buffer_mapped[i],
-                );
-                println!(
-                    "allocation_indices: {:?}",
-                    self.scene_buffer_handles.allocation_indices_mapped[i],
-                );
-                println!(
-                    "commands: {:?}",
-                    self.scene_buffer_handles.bisector_command_mapped[i],
-                );
-                println!(
-                    "splitting: {:?}",
-                    self.scene_buffer_handles.splitting_buffer_mapped[i],
-                );
-                if (i < 6) {
-                    println!(
-                        "root_bisector: {:?}",
-                        self.scene_buffer_handles.root_bisector_buffer_mapped[i],
-                    );
-                }
+            for i in 0..(self.scene_buffer_handles.cbt_interior_mapped[0] + 4) {
+            let i = i as usize;
+            println!("i: {:?}", i);
+            println!(
+            "vertex: {:?}",
+            self.scene_buffer_handles.vertex_buffer_mapped[i],
+            );
+            println!(
+            "heapid: {:b}",
+            self.scene_buffer_handles.heapid_buffer_mapped[i],
+            );
+            println!(
+            "neighbors: {:?}",
+            self.scene_buffer_handles.neighbors_buffer_mapped[i],
+            );
+            println!(
+            "allocation_indices: {:?}",
+            self.scene_buffer_handles.allocation_indices_mapped[i],
+            );
+            println!(
+            "commands: {:?}",
+            self.scene_buffer_handles.bisector_command_mapped[i],
+            );
+            println!(
+            "splitting: {:?}",
+            self.scene_buffer_handles.splitting_buffer_mapped[i],
+            );
+            if (i < 6) {
+            println!(
+            "root_bisector: {:?}",
+            self.scene_buffer_handles.root_bisector_buffer_mapped[i],
+            );
             }
-            println!("cam : {:?}", self.camera);
+            }
+            println!("cam : {:?}", self.camera);*/
             self.frame_index += 1;
         }
     }
@@ -902,12 +994,13 @@ impl<'a> ApplicationHandler for App<'a> {
             // ----------------------------------------------------------------
             // create buffers
 
+            let SCALE: f32 = 100.0;
             let halfedge_mesh = HalfedgeMesh {
                 verts: vec![
-                    Vec3::new(1.0, 0.0, 1.0),
-                    Vec3::new(0.0, 1.0, 1.0),
-                    Vec3::new(-1.0, 0.0, 1.0),
-                    Vec3::new(0.0, -1.0, 1.0),
+                    Vec3::new(SCALE, 0.0, 0.0),
+                    Vec3::new(0.0, SCALE, 0.0),
+                    Vec3::new(-SCALE, 0.0, 0.0),
+                    Vec3::new(0.0, -SCALE, 0.0),
                 ],
                 indices: vec![2, 0, 1, 0, 2, 3],
                 faces: vec![
@@ -931,6 +1024,7 @@ impl<'a> ApplicationHandler for App<'a> {
             };
             let algorithm_data = PipelineData::new(halfedge_mesh, 17);
             debug_assert!(algorithm_data.cbt.leaves.len() == 4096);
+            debug_assert!(algorithm_data.cbt.interior.len() == 8191);
             debug_assert!(algorithm_data.base_depth == 3);
 
             let vertex_buffer_size =
@@ -1220,6 +1314,15 @@ impl<'a> ApplicationHandler for App<'a> {
             let reduce_pipeline =
                 create_compute_pipeline(&device, pipeline_layout, &mut reduce_bytecode, c"main");
 
+            let mut post_reduce_bytecode =
+                Cursor::new(&include_bytes!("./shader/post_reduce.spv")[..]);
+            let post_reduce_pipeline = create_compute_pipeline(
+                &device,
+                pipeline_layout,
+                &mut post_reduce_bytecode,
+                c"main",
+            );
+
             // For split_element.spv (entry split_element)
             let mut split_element_bytecode =
                 Cursor::new(&include_bytes!("./shader/split_element.spv")[..]);
@@ -1311,12 +1414,11 @@ impl<'a> ApplicationHandler for App<'a> {
 
             let mem_props = device_memory_properties;
             let cbt_interior_buffer = AllocatedBuffer::new_with_data_sized(
-                &algorithm_data.cbt.interior,
+                algorithm_data.cbt.interior.as_slice(),
                 &device,
                 mem_props,
                 vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
                     | vk::BufferUsageFlags::TRANSFER_DST
-                    | vk::BufferUsageFlags::INDIRECT_BUFFER
                     | vk::BufferUsageFlags::STORAGE_BUFFER,
                 vk::SharingMode::EXCLUSIVE,
                 vk::MemoryPropertyFlags::DEVICE_LOCAL
@@ -1339,25 +1441,9 @@ impl<'a> ApplicationHandler for App<'a> {
                 cbt_interior_mapped_ptr,
                 algorithm_data.cbt.interior.len(),
             );
-            let cbt_leaves_buffer = AllocatedBuffer::new_with_data_sized(
-                leaves_buffer_nonatomic,
-                &device,
-                mem_props,
-                vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
-                    | vk::BufferUsageFlags::TRANSFER_DST
-                    | vk::BufferUsageFlags::INDIRECT_BUFFER
-                    | vk::BufferUsageFlags::STORAGE_BUFFER,
-                vk::SharingMode::EXCLUSIVE,
-                vk::MemoryPropertyFlags::DEVICE_LOCAL
-                    | vk::MemoryPropertyFlags::HOST_VISIBLE
-                    | vk::MemoryPropertyFlags::HOST_COHERENT,
-                setup_command_buffer,
-                setup_commands_reuse_fence,
-                present_queue,
-            );
 
             let neighbors_buffer = AllocatedBuffer::new_with_data_sized(
-                &algorithm_data.neighbors_buffer,
+                algorithm_data.neighbors_buffer.as_slice(),
                 &device,
                 mem_props,
                 vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
@@ -1386,7 +1472,7 @@ impl<'a> ApplicationHandler for App<'a> {
                 algorithm_data.neighbors_buffer.len(),
             );
             let allocation_indices_buffer = AllocatedBuffer::new_with_data_sized(
-                &algorithm_data.allocation_indices_buffer,
+                algorithm_data.allocation_indices_buffer.as_slice(),
                 &device,
                 mem_props,
                 vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
@@ -1589,6 +1675,34 @@ impl<'a> ApplicationHandler for App<'a> {
                 bisector_command_buffer_ptr,
                 algorithm_data.bisector_split_command_buffer.len(),
             );
+
+            let zeros = vec![0; 3];
+            let merging_buffer = AllocatedBuffer::new_with_data_sized(
+                zeros.as_slice(),
+                &device,
+                mem_props,
+                vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
+                    | vk::BufferUsageFlags::TRANSFER_DST
+                    | vk::BufferUsageFlags::INDIRECT_BUFFER
+                    | vk::BufferUsageFlags::STORAGE_BUFFER,
+                vk::SharingMode::EXCLUSIVE,
+                vk::MemoryPropertyFlags::DEVICE_LOCAL
+                    | vk::MemoryPropertyFlags::HOST_VISIBLE
+                    | vk::MemoryPropertyFlags::HOST_COHERENT,
+                setup_command_buffer,
+                setup_commands_reuse_fence,
+                present_queue,
+            );
+            let merging_buffer_ptr = device
+                .map_memory(
+                    merging_buffer.allocation,
+                    0,
+                    (size_of::<u32>() * zeros.len()) as u64,
+                    vk::MemoryMapFlags::empty(),
+                )
+                .expect("Map Memory.") as *const u32;
+            let merging_buffer_mapped = std::slice::from_raw_parts(merging_buffer_ptr, zeros.len());
+
             let scene_buffer_handles = SceneCPUHandles {
                 cbt_interior_mapped: cbt_interior_mapped,
                 cbt_leaves_mapped: cbt_leaves_mapped,
@@ -1600,6 +1714,7 @@ impl<'a> ApplicationHandler for App<'a> {
                 allocation_indices_mapped: allocation_indices_mapped,
                 bisector_command_mapped: bisector_command_buffer_mapped,
                 splitting_buffer_mapped: splitting_buffer_mapped,
+                merging_buffer_mapped: merging_buffer_mapped,
 
                 cbt_interior: cbt_interior_buffer,
                 cbt_leaves: cbt_leaves_buffer,
@@ -1656,20 +1771,20 @@ impl<'a> ApplicationHandler for App<'a> {
                     present_queue,
                 ),
 
-                merging_bisector_buffer: AllocatedBuffer::new_with_data_sized(
-                    algorithm_data.merging_bisector_buffer.as_slice(),
-                    &device,
-                    mem_props,
-                    vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
-                        | vk::BufferUsageFlags::TRANSFER_DST
-                        | vk::BufferUsageFlags::INDIRECT_BUFFER
-                        | vk::BufferUsageFlags::STORAGE_BUFFER,
-                    vk::SharingMode::EXCLUSIVE,
-                    vk::MemoryPropertyFlags::DEVICE_LOCAL,
-                    setup_command_buffer,
-                    setup_commands_reuse_fence,
-                    present_queue,
-                ),
+                merging_bisector_buffer: merging_buffer, /*AllocatedBuffer::new_with_data_sized(
+                                                             algorithm_data.merging_bisector_buffer.as_slice(),
+                                                             &device,
+                                                             mem_props,
+                                                             vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
+                                                                 | vk::BufferUsageFlags::TRANSFER_DST
+                                                                 | vk::BufferUsageFlags::INDIRECT_BUFFER
+                                                                 | vk::BufferUsageFlags::STORAGE_BUFFER,
+                                                             vk::SharingMode::EXCLUSIVE,
+                                                             vk::MemoryPropertyFlags::DEVICE_LOCAL,
+                                                             setup_command_buffer,
+                                                             setup_commands_reuse_fence,
+                                                             present_queue,
+                                                         ),*/
 
                 vertex_buffer: real_vertex_buffer,
                 curr_id_buffer: AllocatedBuffer::new_with_data_sized(
@@ -1690,6 +1805,7 @@ impl<'a> ApplicationHandler for App<'a> {
                 dispatch_allocate_pipeline: dispatch_allocate_pipeline,
                 allocate_pipeline: allocate_pipeline,
                 reduce_pipeline: reduce_pipeline,
+                post_reduce_pipeline: post_reduce_pipeline,
                 dispatch_split_pipeline: dispatch_split_pipeline,
                 split_element_pipeline: split_element_pipeline,
                 update_pointers_pipeline: update_pointers_pipeline,
@@ -1757,6 +1873,7 @@ impl<'a> ApplicationHandler for App<'a> {
                 num_memory_blocks: algorithm_data.cbt.leaves.len() as u32 * BITFIELD_INT_SIZE,
                 base_depth: algorithm_data.base_depth,
                 cbt_depth: algorithm_data.cbt.depth,
+                debug_counter: 0,
             };
             println!("vertex_buffer_address: {:?}", scene.vertex_buffer);
             let scene_buffer = AllocatedBuffer::new_with_data_sized(
@@ -1798,7 +1915,7 @@ impl<'a> ApplicationHandler for App<'a> {
                 want_merge_buffer_count: 0,
                 merging_bisector_count: 0,
                 num_allocated_blocks: algorithm_data.cbt.interior[0],
-                vertex_buffer_count: algorithm_data.cbt.interior[0] * 3,
+                debug_counter: 0,
             };
             let dispatch_buffer = AllocatedBuffer::new_with_data_sized(
                 std::slice::from_ref(&dispatch), // &[DispatchSizeGPU]
@@ -1866,9 +1983,9 @@ impl<'a> ApplicationHandler for App<'a> {
                 scene_buffer_handles,
 
                 camera: CameraState {
-                    pos: Vec3::new(0.037982415, -0.22862579, -0.11457044),
-                    pitch: 3.0707946,
-                    yaw: -3.4999974,
+                    pos: Vec3::new(0.0, 0.0, 2.0),
+                    pitch: PI / 3.0,
+                    yaw: 0.0,
                 },
             })
         }

@@ -136,6 +136,8 @@ void update_pointers(
     {
         heap_id_buffer[curr_allocation_indices[1]] = 2 * curr_heapid + 0;
         heap_id_buffer[curr_allocation_indices[0]] = 2 * curr_heapid + 1;
+        pc.scene.allocation_indices_buffer[curr_allocation_indices[1]] = INVALID_INDEX;
+        pc.scene.allocation_indices_buffer[curr_allocation_indices[0]] = INVALID_INDEX;
 
         link_siblings(curr_allocation_indices[0], curr_allocation_indices[1]);
     }
@@ -148,6 +150,9 @@ void update_pointers(
         heap_id_buffer[curr_allocation_indices[1]] = 2 * curr_heapid;
         heap_id_buffer[curr_allocation_indices[2]] = 4 * curr_heapid + 2;
         heap_id_buffer[curr_allocation_indices[0]] = 4 * curr_heapid + 3;
+        pc.scene.allocation_indices_buffer[curr_allocation_indices[0]] = INVALID_INDEX;
+        pc.scene.allocation_indices_buffer[curr_allocation_indices[1]] = INVALID_INDEX;
+        pc.scene.allocation_indices_buffer[curr_allocation_indices[2]] = INVALID_INDEX;
     }
     else if (curr_command == LEFT_DOUBLE_SPLIT)
     {
@@ -158,6 +163,9 @@ void update_pointers(
         heap_id_buffer[curr_allocation_indices[0]] = 2 * curr_heapid + 1;
         heap_id_buffer[curr_allocation_indices[2]] = 4 * curr_heapid + 0;
         heap_id_buffer[curr_allocation_indices[1]] = 4 * curr_heapid + 1;
+        pc.scene.allocation_indices_buffer[curr_allocation_indices[0]] = INVALID_INDEX;
+        pc.scene.allocation_indices_buffer[curr_allocation_indices[1]] = INVALID_INDEX;
+        pc.scene.allocation_indices_buffer[curr_allocation_indices[2]] = INVALID_INDEX;
     }
     else
     {
@@ -171,5 +179,13 @@ void update_pointers(
         heap_id_buffer[curr_allocation_indices[1]] = 4 * curr_heapid + 1;
         heap_id_buffer[curr_allocation_indices[2]] = 4 * curr_heapid + 2;
         heap_id_buffer[curr_allocation_indices[0]] = 4 * curr_heapid + 3;
+
+        // DEBUG: UNDO THIS
+        pc.scene.allocation_indices_buffer[curr_allocation_indices[0]] = INVALID_INDEX;
+        pc.scene.allocation_indices_buffer[curr_allocation_indices[1]] = INVALID_INDEX;
+        pc.scene.allocation_indices_buffer[curr_allocation_indices[2]] = INVALID_INDEX;
+        pc.scene.allocation_indices_buffer[curr_allocation_indices[3]] = INVALID_INDEX;
     }
+    // for debugging
+    heap_id_buffer[curr_id] = 0;
 }

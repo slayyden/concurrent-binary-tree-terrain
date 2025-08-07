@@ -1,4 +1,4 @@
-#include "common.slang"
+#include "cbt.slang"
 [shader("compute")]
 [numthreads(WORKGROUP_SIZE, 1, 1)]
 void prepare_merge(
@@ -63,29 +63,39 @@ void prepare_merge(
         num_pairs_to_merge = 2;
     }
 
+    // curr id 8A
+
+    // 7 0.0 | 6 0.1
+    // -----------------
+    // 8 3.1 | 9 3.0
     // Remove reference from NEXT’s twin to NEXT (points back to curr)
     if (next_neighbors[TWIN] != INVALID_INDEX)
     {
-        uint next_twin_id = next_neighbors[TWIN];
-        uint3 next_twin_neighbors = neighbor_buffer[next_twin_id];
-        uint edge_type = find_edge_type(next_id, next_twin_neighbors);
-        neighbor_buffer[next_twin_id][edge_type] = curr_id;
+        uint next_twin_id = next_neighbors[TWIN];                      // 5
+        uint3 next_twin_neighbors = neighbor_buffer[next_twin_id];     // [9, 4, -1]
+        uint edge_type = find_edge_type(next_id, next_twin_neighbors); // NEXT
+        neighbor_buffer[next_twin_id][edge_type] = curr_id;            // 5 -> 9 = 8
     }
 
     uint base_slot = pc.dispatch.merging_bisector_count.add(num_pairs_to_merge);
     simplification_buffer[base_slot] = curr_id;
 
+    heap_id_buffer[next_id] = 0;
+    unset_bit(next_id);
+
     if (num_pairs_to_merge == 2)
     {
         simplification_buffer[base_slot + 1] = twin_highid;
 
-        uint3 twin_low_neighbors = neighbor_buffer[twin_lowid];
+        uint3 twin_low_neighbors = neighbor_buffer[twin_lowid]; // neighbors of 7 ([8, 6, 2])
         if (twin_low_neighbors[TWIN] != INVALID_INDEX)
         {
-            uint twin_low_twin_id = twin_low_neighbors[TWIN];
-            uint3 twin_low_twin_neighbors = neighbor_buffer[twin_low_twin_id];
-            uint edge_type = find_edge_type(twin_lowid, twin_low_twin_neighbors);
+            uint twin_low_twin_id = twin_low_neighbors[TWIN];                     // 2
+            uint3 twin_low_twin_neighbors = neighbor_buffer[twin_low_twin_id];    // [7, 1, -1]
+            uint edge_type = find_edge_type(twin_lowid, twin_low_twin_neighbors); // NEXT
             neighbor_buffer[twin_low_twin_id][edge_type] = twin_highid;
         }
+        heap_id_buffer[twin_lowid] = 0;
+        unset_bit(twin_lowid);
     }
 }

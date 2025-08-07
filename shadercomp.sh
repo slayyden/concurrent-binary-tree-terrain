@@ -5,6 +5,7 @@ $SLANGC src/shader/test.slang $FLAGS -entry vertexMain -o src/shader/vert.spv
 $SLANGC src/shader/classify.slang $FLAGS -entry classify -o src/shader/classify.spv
 $SLANGC src/shader/allocate.slang $FLAGS -entry allocate -o src/shader/allocate.spv
 $SLANGC src/shader/cbt_reduce.slang $FLAGS -entry reduce -o src/shader/reduce.spv
+$SLANGC src/shader/post_reduce.slang $FLAGS -entry post_reduce -o src/shader/post_reduce.spv
 $SLANGC src/shader/split_element.slang $FLAGS -entry split_element -o src/shader/split_element.spv
 $SLANGC src/shader/update_pointers.slang $FLAGS -entry update_pointers -o src/shader/update_pointers.spv
 $SLANGC src/shader/prepare_merge.slang $FLAGS -entry prepare_merge -o src/shader/prepare_merge.spv

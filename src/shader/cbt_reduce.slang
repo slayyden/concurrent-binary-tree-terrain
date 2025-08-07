@@ -1,51 +1,228 @@
 
 #include "common.slang"
 
+groupshared uint buf0[4096];
+groupshared uint buf1[2048];
+
 [shader("compute")]
 [numthreads(1024, 1, 1)]
 void reduce(uint3 threadId: SV_DispatchThreadID)
 {
-    let interior_offset = num_internal / 2;
     let tid = threadId.x;
-    let scene = pc.scene;
+    let interior_offset = num_internal / 2;
+    let interior = pc.scene.cbt_interior;
+    let leaves = pc.scene.cbt_leaves;
 
-    for (int i = 0; i < 4; ++i)
+    // bottom level: [4095, 8191)
+    for (uint i = 0; i < 4096; i += 1024)
     {
-        let j = tid * 4 + i;
-        if (j <= interior_offset)
-        {
-            scene.cbt_interior[interior_offset + j] = countbits(scene.cbt_leaves[j].load());
-        }
+        let leaf_index = tid + i;
+        let num_allocated = countbits(leaves[leaf_index].load());
+        buf0[leaf_index] = num_allocated;
+        interior[interior_offset + leaf_index] = num_allocated;
     }
 
-    DeviceMemoryBarrier();
-    // index_of_last_level = depth
-    // 32 (depth) -> 16 (depth - 1) -> 8 (depth - 2) -> 4 (depth - 3) -> 2 (depth - 4) -> 1 (depth - 5)
-    // all these levels have been filled
-    let deepest_filled_level = scene.cbt_depth - 5;
+    GroupMemoryBarrier();
 
-    for (int level = deepest_filled_level - 1; level >= 0; --level)
+    // level n-1 [2047, 4095)
     {
-        let level_start = (1 << level) - 1;
-        let level_end = (1 << (level + 1)) - 1;
-        for (int i = 0; i < 4; ++i)
+        let interior_offset = num_internal / (1 << 2);
+        for (uint i = 0; i < 2048; i += 1024)
         {
-            let j = tid * 4 + i;
-            if (level_start <= j && j < level_end)
-            {
-                scene.cbt_interior[j] = scene.cbt_interior[2 * j + 1] + scene.cbt_interior[2 * j + 2];
-            }
+            let index_in_level = tid + i;
+            let sum = buf0[2 * index_in_level] + buf0[2 * index_in_level + 1];
+            buf1[index_in_level] = sum;
+            interior[interior_offset + index_in_level] = sum;
         }
-        DeviceMemoryBarrier();
     }
-
-    if (tid.x == 0)
+    GroupMemoryBarrier();
+    // level n-2 [1023, 2047)
     {
-        let num_bisectors = scene.cbt_interior[0];
-        pc.dispatch.remaining_memory_count = (1 << 17) - num_bisectors;
+        let interior_offset = num_internal / (1 << 3);
+        let index_in_level = tid;
+        let sum = buf1[2 * index_in_level] + buf1[2 * index_in_level + 1];
+        buf0[index_in_level] = sum;
+        interior[interior_offset + index_in_level] = sum;
+    }
+    GroupMemoryBarrier();
+
+    // level n-3 [511, 1023)
+    {
+        let index_in_level = tid;
+        if (index_in_level < 512)
+        {
+            let interior_offset = num_internal / (1 << 4);
+            let sum = buf0[2 * index_in_level] + buf0[2 * index_in_level + 1];
+            buf1[index_in_level] = sum;
+            interior[interior_offset + index_in_level] = sum;
+        }
+    }
+    GroupMemoryBarrier();
+
+    // level n-4 [255, 511)
+    {
+        let index_in_level = tid;
+        if (index_in_level < 256)
+        {
+            let interior_offset = num_internal / (1 << 5);
+            let sum = buf1[2 * index_in_level] + buf1[2 * index_in_level + 1];
+            buf0[index_in_level] = sum;
+            interior[interior_offset + index_in_level] = sum;
+        }
+    }
+    GroupMemoryBarrier();
+
+    // level n-5 [127, 255)
+    {
+        let index_in_level = tid;
+        if (index_in_level < 128)
+        {
+            let interior_offset = num_internal / (1 << 6);
+            let sum = buf0[2 * index_in_level] + buf0[2 * index_in_level + 1];
+            buf1[index_in_level] = sum;
+            interior[interior_offset + index_in_level] = sum;
+        }
+    }
+    GroupMemoryBarrier();
+
+    // level n-6 [63, 127)
+    {
+        let index_in_level = tid;
+        if (index_in_level < 64)
+        {
+            let interior_offset = num_internal / (1 << 7);
+            let sum = buf1[2 * index_in_level] + buf1[2 * index_in_level + 1];
+            buf0[index_in_level] = sum;
+            interior[interior_offset + index_in_level] = sum;
+        }
+    }
+    GroupMemoryBarrier();
+
+    // level n-7 [31, 63)
+    {
+        let index_in_level = tid;
+        if (index_in_level < 32)
+        {
+            let interior_offset = num_internal / (1 << 8);
+            let sum = buf0[2 * index_in_level] + buf0[2 * index_in_level + 1];
+            buf1[index_in_level] = sum;
+            interior[interior_offset + index_in_level] = sum;
+        }
+    }
+    GroupMemoryBarrier();
+
+    // level n-8 [15, 31)
+    {
+        let index_in_level = tid;
+        if (index_in_level < 16)
+        {
+            let interior_offset = num_internal / (1 << 9);
+            let sum = buf1[2 * index_in_level] + buf1[2 * index_in_level + 1];
+            buf0[index_in_level] = sum;
+            interior[interior_offset + index_in_level] = sum;
+        }
+    }
+    GroupMemoryBarrier();
+
+    // level n-9 [7, 15)
+    {
+        let index_in_level = tid;
+        if (index_in_level < 8)
+        {
+            let interior_offset = num_internal / (1 << 10);
+            let sum = buf0[2 * index_in_level] + buf0[2 * index_in_level + 1];
+            buf1[index_in_level] = sum;
+            interior[interior_offset + index_in_level] = sum;
+        }
+    }
+    GroupMemoryBarrier();
+
+    // level n-10 [3, 7)
+    {
+        let index_in_level = tid;
+        if (index_in_level < 4)
+        {
+            let interior_offset = num_internal / (1 << 11);
+            let sum = buf1[2 * index_in_level] + buf1[2 * index_in_level + 1];
+            buf0[index_in_level] = sum;
+            interior[interior_offset + index_in_level] = sum;
+        }
+    }
+    GroupMemoryBarrier();
+
+    // level n-11 [1, 3)
+    {
+        let index_in_level = tid;
+        if (index_in_level < 2)
+        {
+            let interior_offset = num_internal / (1 << 12);
+            let sum = buf0[2 * index_in_level] + buf0[2 * index_in_level + 1];
+            buf1[index_in_level] = sum;
+            interior[interior_offset + index_in_level] = sum;
+        }
+    }
+    GroupMemoryBarrier();
+
+    // level n-12 [0, 1)
+    uint final = 120394819u;
+    {
+        let index_in_level = tid;
+        if (index_in_level < 1)
+        {
+            let interior_offset = num_internal / (1 << 13);
+            let sum = buf1[2 * index_in_level] + buf1[2 * index_in_level + 1];
+            buf0[index_in_level] = sum;
+            interior[interior_offset + index_in_level] = sum;
+            final = sum;
+        }
+    }
+    GroupMemoryBarrier();
+    if (threadId.x == 0 && threadId.y == 0 && threadId.z == 0)
+    {
+        // let num_bisectors : uint = buf0[0];
+        let num_bisectors : uint = final;
+        pc.dispatch.remaining_memory_count.store((int)(1 << 17) - (int)num_bisectors);
         pc.dispatch.num_allocated_blocks = num_bisectors;
-        pc.dispatch.draw_indirect_command.vertex_count = num_bisectors * 3;
+        pc.dispatch.draw_indirect_command.vertex_count = 3 * num_bisectors;
         pc.dispatch.dispatch_vertex_compute_command.x = div_ceil(num_bisectors, WORKGROUP_SIZE);
     }
+    /*
+        for (int i = 0; i < 4; ++i)
+        {
+            let j = tid * (i + 1);
+            if (j <= interior_offset)
+            {
+                interior[interior_offset + j] = countbits(leaves[j].load());
+            }
+        }
+
+        DeviceMemoryBarrier();
+        // index_of_last_level = depth
+        // 32 (depth) -> 16 (depth - 1) -> 8 (depth - 2) -> 4 (depth - 3) -> 2 (depth - 4) -> 1 (depth - 5)
+        // all these levels have been filled
+        let deepest_filled_level = pc.scene.cbt_depth - 5;
+
+        for (int level = deepest_filled_level - 1; level >= 0; --level)
+        {
+            let level_start = (1 << level) - 1;
+            let level_end = (1 << (level + 1)) - 1;
+            for (int i = 0; i < 4; ++i)
+            {
+                let j = tid * (i + 1); // TODO change to coalesce memory
+                if (level_start <= j && j < level_end)
+                {
+                    interior[j] =
+                        interior[2 * j + 1] + interior[2 * j + 2];
+                    if (j == 0)
+                    {
+                        pc.dispatch.debug_counter = interior[j];
+                    }
+                }
+            }
+            DeviceMemoryBarrier();
+        }
+
+    return;
+    */
 }
 

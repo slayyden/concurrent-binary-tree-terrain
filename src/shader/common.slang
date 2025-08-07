@@ -37,6 +37,7 @@ struct SceneData
     uint num_memory_blocks;
     uint base_depth;
     uint cbt_depth;
+    uint debug_counter;
 }
 
 struct DrawIndirectCommand
@@ -73,7 +74,7 @@ struct DispatchData
     Atomic<uint> merging_bisector_count;
     // written at reduce
     uint num_allocated_blocks;
-    Atomic<uint> vertex_buffer_count;
+    uint debug_counter;
 }
 
 struct PushConstant
@@ -106,6 +107,9 @@ static const uint NEXT = 0;
 static const uint PREV = 1;
 static const uint TWIN = 2;
 
+static const uint SCREEN_WIDTH = 1920;
+static const uint SCREEN_HEIGHT = 1080;
+
 enum TriState : int
 {
     BACK_FACE_CULLED = -3,
@@ -121,15 +125,7 @@ ConstantBuffer<PushConstant> pc;
 
 uint heap_id_depth(uint heapid)
 {
-    // return firstbithigh(heapid);
-    var x = heapid;
-    uint depth = 0;
-    while (x > 0u)
-    {
-        ++depth;
-        x >>= 1u;
-    }
-    return depth - 1;
+    return firstbithigh(heapid);
 }
 
 // Given current ID and neighbor's neighbors, find edge type
@@ -147,3 +143,13 @@ uint div_ceil(uint x, uint divisor)
 {
     return (x + divisor - 1) / divisor;
 }
+
+// linearly remap val from [low0, high0] to [low1, high1].
+inline T map_range<T>(T val, T low0, T high0, T low1, T high1)
+    where T : IArithmetic
+{
+    // t in [0, 1] if val in [low0, high0]
+    let t = (val - low0) / (high0 - low0);
+    return low1 + t * (high1 - low1);
+}
+

@@ -45,29 +45,29 @@ void split_element(uint3 tid: SV_DispatchThreadID)
     uint current_depth = heap_id_depth(heapid); // 3
 
     uint twin_id = curr_neighbors[TWIN]; // 3
-    uint max_required_memory = (twin_id == INVALID_INDEX)                     ? 1
-                               : (neighbors_buffer[twin_id][TWIN] == curr_id) ? 2
-                                                                              : 2 * (current_depth - base_depth) - 1;
+    int max_required_memory = (twin_id == INVALID_INDEX)                     ? 1
+                              : (neighbors_buffer[twin_id][TWIN] == curr_id) ? 2
+                                                                             : 2 * (current_depth - base_depth) - 1;
     // 2
-    uint remaining_memory = pc.dispatch.remaining_memory_count.add(-int(max_required_memory)); // big number
+    uint remaining_memory = pc.dispatch.remaining_memory_count.add(-max_required_memory); // big number
 
     if (remaining_memory < max_required_memory)
     {
-        pc.dispatch.remaining_memory_count.add(int(max_required_memory)); // undo subtraction
+        pc.dispatch.remaining_memory_count.add(max_required_memory); // undo subtraction
         return;
     }
 
     uint base_pattern = bisector_command_buffer[curr_id].or(CENTER_SPLIT);
     if (base_pattern != NO_SPLIT)
     {
-        pc.dispatch.remaining_memory_count.add(int(max_required_memory));
+        pc.dispatch.remaining_memory_count.add(max_required_memory);
         return;
     }
 
     uint target_location = pc.dispatch.splitting_buffer_count.add(1);
     splitting_buffer[target_location] = curr_id;
 
-    uint used_memory = 1;
+    int used_memory = 1;
     bool done = false;
     while (!done)
     {
@@ -116,6 +116,6 @@ void split_element(uint3 tid: SV_DispatchThreadID)
             }
         }
 
-        pc.dispatch.remaining_memory_count.add(max((int(max_required_memory) - int(used_memory)), 0));
+        pc.dispatch.remaining_memory_count.add(max_required_memory - used_memory);
     }
 }

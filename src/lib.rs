@@ -916,7 +916,6 @@ pub fn update_pointers(
     }
 }
 
-// shamelessly copied from the original
 pub fn prepare_merge(
     curr_id: u32,
     neighbor_buffer: &mut [[u32; 3]],
@@ -1068,6 +1067,7 @@ pub struct SceneDataGPU {
     pub num_memory_blocks: u32,
     pub base_depth: u32,
     pub cbt_depth: u32,
+    pub debug_counter: u32,
 }
 
 pub struct SceneCPUHandles<'a> {
@@ -1081,6 +1081,7 @@ pub struct SceneCPUHandles<'a> {
     pub allocation_indices_mapped: &'a [[u32; 4]],
     pub bisector_command_mapped: &'a [u32],
     pub splitting_buffer_mapped: &'a [u32],
+    pub merging_buffer_mapped: &'a [u32],
 
     // written once at initialization
     pub root_bisector_vertices: AllocatedBuffer,
@@ -1127,6 +1128,7 @@ pub struct SceneCPUHandles<'a> {
     pub prepare_merge_pipeline: vk::Pipeline,
     pub merge_pipeline: vk::Pipeline,
     pub reduce_pipeline: vk::Pipeline,
+    pub post_reduce_pipeline: vk::Pipeline,
 
     pub curr_id_buffer: AllocatedBuffer,
 }
@@ -1152,7 +1154,9 @@ pub struct DispatchSizeGPU {
     pub want_merge_buffer_count: u32,
     pub merging_bisector_count: u32,
     pub num_allocated_blocks: u32,
-    pub vertex_buffer_count: u32,
+
+    // DEBUG
+    pub debug_counter: u32,
 }
 pub struct PipelineData {
     // written once at initialization
@@ -1407,7 +1411,9 @@ impl CameraState {
         let down = Vec4::new(0.0, 0.0, -1.0, 1.0);
         let pitched = Mat4::from_rotation_x(self.pitch) * down;
         let yawed = Mat4::from_rotation_z(self.yaw) * pitched;
-        return Vec3::new(yawed.x, yawed.y, yawed.z);
+        let ret = Vec3::new(yawed.x, yawed.y, yawed.z);
+        debug_assert!((ret.length() - 1.0).abs() < 0.001);
+        return ret;
         // return Vec3::new(0.0, 1.0, 0.0);
         // return -self.pos;
     }
