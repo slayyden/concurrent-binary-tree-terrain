@@ -164,8 +164,14 @@ impl<'a> State<'a> {
                 .render_area(vk::Rect2D::default().extent(self.resolution));
 
             // command buffer and rendering
-            dev.begin_command_buffer(*cmdbuf, &vk::CommandBufferBeginInfo::default())
-                .expect("Could not begin command buffer.");
+            dev.reset_command_buffer(*cmdbuf, vk::CommandBufferResetFlags::RELEASE_RESOURCES)
+                .expect("Reset command buffer failed.");
+            dev.begin_command_buffer(
+                *cmdbuf,
+                &vk::CommandBufferBeginInfo::default()
+                    .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
+            )
+            .expect("Could not begin command buffer.");
 
             let timeline_semaphores = [self.frame_pace_semaphore];
             let timeline_semaphore_wait_values = [self.frame_index];
