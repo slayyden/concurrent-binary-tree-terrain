@@ -403,6 +403,7 @@ impl<'a> State<'a> {
                 byteslice(&push_constants),
             );
             // global_memory_barrier();
+            /*
             // post reduce
             dev.cmd_bind_pipeline(
                 *cmdbuf,
@@ -428,7 +429,7 @@ impl<'a> State<'a> {
                 &[],
                 &[buffer_barrier],
                 &[],
-            );
+            );*/
             // vertex compute
             dev.cmd_bind_pipeline(
                 *cmdbuf,
