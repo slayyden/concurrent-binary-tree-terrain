@@ -359,17 +359,50 @@ impl<'a> State<'a> {
             );
             dev.cmd_dispatch(*cmdbuf, 1, 1, 1);
 
-            dev.cmd_pipeline_barrier(
+            dev.end_command_buffer(*cmdbuf)
+                .expect("End command buffer.");
+
+            {
+                let command_buffers = vec![*cmdbuf];
+                let wait_semaphores = [self.present_complete_semaphore[semaphore_index]];
+                let signal_semaphores = [self.render_complete_semaphore[semaphore_index]];
+
+                let submit_info = vk::SubmitInfo::default()
+                    .wait_semaphores(&wait_semaphores)
+                    .wait_dst_stage_mask(&[vk::PipelineStageFlags::ALL_COMMANDS])
+                    .command_buffers(&command_buffers)
+                    .signal_semaphores(&[]);
+
+                dev.queue_submit(
+                    self.present_queue,
+                    &[submit_info],
+                    vk::Fence::null(), /*self.command_reuse_fences[frame_fence_index],*/
+                )
+                .expect("Queue Submit");
+            }
+
+            dev.device_wait_idle().expect("Wait idle");
+
+            // we can print stuff here!
+            println!("START");
+            println!(
+                "interior0: {:?}",
+                self.scene_buffer_handles.cbt_interior_mapped[0]
+            );
+
+            dev.reset_command_buffer(*cmdbuf, vk::CommandBufferResetFlags::empty())
+                .expect("Failed to reset command buffer");
+            dev.begin_command_buffer(*cmdbuf, &vk::CommandBufferBeginInfo::default())
+                .expect("Could not begin command buffer.");
+
+            dev.cmd_push_constants(
                 *cmdbuf,
-                vk::PipelineStageFlags::COMPUTE_SHADER,
-                vk::PipelineStageFlags::COMPUTE_SHADER,
-                vk::DependencyFlags::empty(),
-                &[memory_barrier],
-                &[],
-                &[],
+                self.pipeline_layout,
+                vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::COMPUTE,
+                0,
+                byteslice(&push_constants),
             );
             // global_memory_barrier();
-            /*
             // post reduce
             dev.cmd_bind_pipeline(
                 *cmdbuf,
@@ -378,7 +411,6 @@ impl<'a> State<'a> {
             );
             dev.cmd_dispatch(*cmdbuf, 1, 1, 1);
             global_memory_barrier();
-            */
 
             // vertex compute
             dev.cmd_bind_pipeline(
@@ -517,12 +549,13 @@ impl<'a> State<'a> {
 
             {
                 let command_buffers = vec![*cmdbuf];
-                let wait_semaphores = [self.present_complete_semaphore[semaphore_index]];
+                // let wait_semaphores = [self.present_complete_semaphore[semaphore_index]];
                 let signal_semaphores = [self.render_complete_semaphore[semaphore_index]];
 
                 let submit_info = vk::SubmitInfo::default()
-                    .wait_semaphores(&wait_semaphores)
-                    .wait_dst_stage_mask(&[vk::PipelineStageFlags::ALL_GRAPHICS])
+                    .wait_semaphores(&[])
+                    // .wait_dst_stage_mask(&[vk::PipelineStageFlags::ALL_COMMANDS])
+                    .wait_dst_stage_mask(&[])
                     .command_buffers(&command_buffers)
                     .signal_semaphores(&signal_semaphores);
 
@@ -549,7 +582,7 @@ impl<'a> State<'a> {
             // TODO: UNDO THIS
             dev.device_wait_idle().expect("Wait Idle");
             // WARNING: WE CANNOT RETURN EARLY BECAUSE OF THIS
-            println!("START");
+            println!("MID");
             println!("draw: {:?}", self.dispatch_mapped.draw_indirect_command);
             println!("dispatch: {:?}", *self.dispatch_mapped);
             println!(

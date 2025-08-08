@@ -174,8 +174,10 @@ void reduce(uint3 threadId: SV_DispatchThreadID)
             buf0[index_in_level] = sum;
             interior[interior_offset + index_in_level] = sum;
             final = sum;
+            pc.scene.debug_counter = sum;
         }
     }
+    return;
     GroupMemoryBarrier();
     if (threadId.x == 0 && threadId.y == 0 && threadId.z == 0)
     {

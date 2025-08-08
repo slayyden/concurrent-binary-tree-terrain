@@ -4,7 +4,6 @@
 [numthreads(1, 1, 1)]
 void post_reduce(uint3 tid: SV_DispatchThreadID)
 {
-    return;
     if (tid.x == 0 && tid.y == 0 && tid.z == 0)
     {
         let num_bisectors : uint = pc.scene.cbt_interior[0];
