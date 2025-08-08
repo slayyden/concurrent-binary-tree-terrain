@@ -178,7 +178,6 @@ void reduce(uint3 threadId: SV_DispatchThreadID)
     if (threadId.x == 0 && threadId.y == 0 && threadId.z == 0)
     {
         let num_bisectors : uint = buf0[0];
-        // let num_bisectors : uint = final;
         pc.dispatch.remaining_memory_count.store((int)(1 << 17) - (int)num_bisectors);
         pc.dispatch.num_allocated_blocks = num_bisectors;
         pc.dispatch.draw_indirect_command.vertex_count = 3 * num_bisectors;

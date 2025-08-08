@@ -389,6 +389,7 @@ impl<'a> State<'a> {
                 "interior0: {:?}",
                 self.scene_buffer_handles.cbt_interior_mapped[0]
             );
+            println!("dispatch after first command: {:?}", *self.dispatch_mapped);
 
             dev.reset_command_buffer(*cmdbuf, vk::CommandBufferResetFlags::empty())
                 .expect("Failed to reset command buffer");
@@ -601,8 +602,12 @@ impl<'a> State<'a> {
             dev.device_wait_idle().expect("Wait Idle");
             // WARNING: WE CANNOT RETURN EARLY BECAUSE OF THIS
             println!("MID");
-            println!("draw: {:?}", self.dispatch_mapped.draw_indirect_command);
-            println!("dispatch: {:?}", *self.dispatch_mapped);
+            println!(
+                "dispatch after second command buffer: {:?}",
+                *self.dispatch_mapped
+            );
+            println!("END");
+            /*
             println!(
                 "interior0: {:?}",
                 self.scene_buffer_handles.cbt_interior_mapped[0]
@@ -669,8 +674,6 @@ impl<'a> State<'a> {
                     self.scene_buffer_handles.vertex_buffer_mapped[vertex_index as usize]
                 );
             }
-            println!("END");
-            /*
             let sum: u32 = self
                 .scene_buffer_handles
                 .cbt_leaves_mapped
