@@ -411,7 +411,24 @@ impl<'a> State<'a> {
             );
             dev.cmd_dispatch(*cmdbuf, 1, 1, 1);
             global_memory_barrier();
+            let buffer_barrier = vk::BufferMemoryBarrier::default()
+                .buffer(self.dispatch_buffer.buffer)
+                .size(size_of::<DispatchSizeGPU>() as u64)
+                .src_access_mask(vk::AccessFlags::SHADER_WRITE) // what the writer did
+                .dst_access_mask(
+                    vk::AccessFlags::INDIRECT_COMMAND_READ |   // cmd_draw_indirect
+                    vk::AccessFlags::VERTEX_ATTRIBUTE_READ, // vertex shader reads
+                );
 
+            dev.cmd_pipeline_barrier(
+                *cmdbuf,
+                vk::PipelineStageFlags::COMPUTE_SHADER,
+                vk::PipelineStageFlags::DRAW_INDIRECT | vk::PipelineStageFlags::VERTEX_INPUT,
+                vk::DependencyFlags::empty(),
+                &[],
+                &[buffer_barrier],
+                &[],
+            );
             // vertex compute
             dev.cmd_bind_pipeline(
                 *cmdbuf,
