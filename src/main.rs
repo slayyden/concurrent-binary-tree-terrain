@@ -341,8 +341,8 @@ impl State {
             dev.cmd_dispatch(*cmdbuf, 1, 1, 1);
 
             let buffer_barrier = vk::BufferMemoryBarrier::default()
-                .buffer(self.dispatch_buffer.buffer)
-                .size(size_of::<DispatchSizeGPU>() as u64)
+                .buffer(self.dispatch_buffer.buffer())
+                .size(size_of::<DispatchDataGPU>() as u64)
                 .src_access_mask(vk::AccessFlags::SHADER_WRITE) // writer (post_reduce)
                 .dst_access_mask(
                     vk::AccessFlags::INDIRECT_COMMAND_READ |   // indirect draw
@@ -357,19 +357,9 @@ impl State {
                 &[buffer_barrier],
                 &[],
             );
-            // global_memory_barrier();
-            /*
-            // post reduce
-            dev.cmd_bind_pipeline(
-                *cmdbuf,
-                vk::PipelineBindPoint::COMPUTE,
-                self.scene_buffer_handles.post_reduce_pipeline,
-            );
-            dev.cmd_dispatch(*cmdbuf, 1, 1, 1);
-            global_memory_barrier();
             let buffer_barrier = vk::BufferMemoryBarrier::default()
                 .buffer(self.dispatch_buffer.buffer())
-                .size(size_of::<DispatchSizeGPU>() as u64)
+                .size(size_of::<DispatchDataGPU>() as u64)
                 .src_access_mask(vk::AccessFlags::SHADER_WRITE) // what the writer did
                 .dst_access_mask(
                     vk::AccessFlags::INDIRECT_COMMAND_READ |   // cmd_draw_indirect
@@ -384,7 +374,7 @@ impl State {
                 &[],
                 &[buffer_barrier],
                 &[],
-            );*/
+            );
             // vertex compute
             dev.cmd_bind_pipeline(
                 *cmdbuf,
