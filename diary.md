@@ -243,4 +243,7 @@ indirect buffer: 0x1477131e0
 dispatch buffer: 0x151811990
 - root_bisector vertices is not (offset 0)
 - cbt_interior is saved from overrun  (offset 8)
-- 
+-
+
+# Well we fixed it
+I don't even know what the cause was. Fuck my life man
