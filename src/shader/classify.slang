@@ -3,7 +3,13 @@
 TriState classify_triangle(float3[3] verts, uint heapid)
 {
     let normal = cross(verts[1] - verts[0], verts[2] - verts[1]);
+    /*
     let depth = heap_id_depth(heapid);
+    if (depth < 25)
+    {
+        return TriState::BISECT_ELEMENT;
+    }
+    return TriState::UNCHANGED_ELEMENT;*/
 
     let normal_normalized = normalize(normal);
     if (dot(normal_normalized, pc.lookdir) > 0 + 10e-2)
@@ -24,8 +30,7 @@ TriState classify_triangle(float3[3] verts, uint heapid)
     let edge0 = v1_projected.xy - v0_projected.xy;
     let edge1 = v2_projected.xy - v0_projected.xy;
     let det = abs(edge0.x * edge1.y - edge0.y * edge1.x);
-    let area = 0.5 * det;
-
+    let area = (0.5 * det) / (SCREEN_HEIGHT * SCREEN_WIDTH);
     /*
     let tri_center = 0.3333 * (verts[0] + verts[1] + verts[2]);
     let center_to_cam = tri_center - pc.cam_pos;
@@ -34,8 +39,7 @@ TriState classify_triangle(float3[3] verts, uint heapid)
     let area = length(normal) / 2.0;*/
 
     // a is proportional to the screen area
-    // if (area > 128 && (heapid & (1 << 31)) == 0)
-    if (depth < 14)
+    if (area > 1 && heap_id_depth(heapid) < 18)
     {
         return TriState::BISECT_ELEMENT;
     }
@@ -51,15 +55,77 @@ TriState classify_triangle(float3[3] verts, uint heapid)
 [numthreads(64, 1, 1)]
 void classify(uint3 tid: SV_DispatchThreadID)
 {
+
     if (tid.x >= pc.scene.cbt_interior[0])
     {
         return;
     }
 
+    /*
+    struct SceneData
+    {
+        // written once at initialization
+        float3 *root_bisector_vertices;
+        // our concurrent binary tree
+        // cbt: CBT,
+        uint *cbt_interior;
+        Atomic<uint> *cbt_leaves;
+
+        // classification stage
+        TriState *bisector_state_buffer;
+
+        // prepare split
+        uint *bisector_split_command_buffer;
+        uint3 *neighbors_buffer;
+        uint *splitting_buffer;
+        uint *heapid_buffer;
+
+        // allocate
+        uint4 *allocation_indices_buffer;
+
+        // split
+        uint *want_split_buffer;
+
+        // prepare merge
+        uint *want_merge_buffer;
+
+        // merge
+        uint *merging_bisector_buffer;
+
+        // draw
+        float3 *vertex_buffer;
+
+        uint *currid_buffer;
+
+        // integers
+        uint num_memory_blocks;
+        uint base_depth;
+        uint cbt_depth;
+        uint debug_counter;
+    }
+    */
+    /*
+    if (true)
+    {
+        pc.scene.debug_counter += (uint)pc.scene.root_bisector_vertices[0][0];
+        pc.scene.debug_counter += pc.scene.cbt_interior[0];
+        pc.scene.debug_counter += pc.scene.cbt_leaves[0].load();
+        pc.scene.debug_counter += (uint)pc.scene.bisector_state_buffer[0];
+        pc.scene.debug_counter += pc.scene.bisector_split_command_buffer[0];
+        pc.scene.debug_counter += pc.scene.neighbors_buffer[0][0];
+        pc.scene.debug_counter += pc.scene.splitting_buffer[0];
+        pc.scene.debug_counter += pc.scene.heapid_buffer[0];
+        pc.scene.debug_counter += pc.scene.allocation_indices_buffer[0][0];
+        pc.scene.debug_counter += pc.scene.want_split_buffer[0];
+        pc.scene.debug_counter += pc.scene.want_merge_buffer[0];
+        pc.scene.debug_counter += pc.scene.merging_bisector_buffer[0];
+        pc.scene.debug_counter += (uint)pc.scene.vertex_buffer[0][0];
+    }*/
+
     let curr_id = one_bit_to_id(tid.x);
     let heap_id = pc.scene.heapid_buffer[curr_id];
     // Reset some values
-    pc.scene.currid_buffer[tid.x] = curr_id;
+    // pc.scene.currid_buffer[tid.x] = curr_id;
     pc.scene.bisector_split_command_buffer[curr_id] = NO_SPLIT;
     pc.scene.allocation_indices_buffer[curr_id] = uint4(INVALID_INDEX, INVALID_INDEX, INVALID_INDEX, INVALID_INDEX);
     // pc.scene.bisector_state_buffer[curr_id] = TriState::;

@@ -1,12 +1,17 @@
+#![allow(unsafe_op_in_unsafe_fn)]
+
 use std::{
     cmp::max,
+    marker::PhantomData,
+    ptr::null_mut,
+    slice,
     sync::atomic::{AtomicU32, Ordering},
     u32,
 };
 
 use glam::{Mat4, Vec2, Vec3, Vec4};
 
-use ash::{Device, util::Align, vk};
+use ash::{Device, vk};
 
 pub fn byteslice<T: Sized>(p: &T) -> &[u8] {
     unsafe {
@@ -91,25 +96,99 @@ pub fn record_submit_commandbuffer<F: FnOnce(&Device, vk::CommandBuffer)>(
             .expect("Queue submit failed.");
     }
 }
-pub struct AllocatedBuffer {
-    pub buffer: vk::Buffer,
-    pub allocation: vk::DeviceMemory,
+pub struct AllocatedBuffer<T> {
+    buffer: vk::Buffer,
+    allocation: vk::DeviceMemory,
+    address: vk::DeviceAddress,
+    num_elems: u64,
+    _marker: PhantomData<T>,
 }
 
-impl AllocatedBuffer {
-    pub fn new(
+impl<T> AllocatedBuffer<T> {
+    fn map_memory(&self, device: &ash::Device) -> *mut T {
+        unsafe {
+            device
+                .map_memory(
+                    self.allocation,
+                    0,
+                    size_of::<T>() as u64 * self.num_elems,
+                    vk::MemoryMapFlags::empty(),
+                )
+                .expect("Map Memory.") as *mut T
+        }
+    }
+}
+
+pub struct MappedBuffer<T> {
+    allocated_buffer: AllocatedBuffer<T>,
+    ptr: *mut T,
+}
+
+pub trait GPUBuffer<T> {
+    fn new(
         device: &ash::Device,
-        size: u64,
+        num_elems: u64,
+        mem_props: vk::PhysicalDeviceMemoryProperties,
+        usage: vk::BufferUsageFlags,
+        sharing_mode: vk::SharingMode,
+        memory_type: vk::MemoryPropertyFlags,
+    ) -> Self;
+
+    fn new_with_data(
+        device: &ash::Device,
+        data: &[T],
+        mem_props: vk::PhysicalDeviceMemoryProperties,
+        usage: vk::BufferUsageFlags,
+        sharing_mode: vk::SharingMode,
+        memory_type: vk::MemoryPropertyFlags,
+        command_buffer: vk::CommandBuffer,
+        command_buffer_reuse_fence: vk::Fence,
+        queue: vk::Queue,
+    ) -> Self;
+
+    fn device_address(&self) -> vk::DeviceAddress;
+    fn destroy(&mut self, device: &ash::Device);
+
+    fn allocation(&self) -> vk::DeviceMemory;
+    fn buffer(&self) -> vk::Buffer;
+
+    fn size_in_bytes(&self) -> u64;
+}
+
+pub trait GPUMappedBuffer<T> {
+    unsafe fn mapped_slice(&self) -> &mut [T];
+    fn copy_from_slice(&self, src: &[T]);
+}
+
+impl<T: Copy> GPUMappedBuffer<T> for MappedBuffer<T> {
+    unsafe fn mapped_slice(&self) -> &mut [T] {
+        slice::from_raw_parts_mut(self.ptr, self.allocated_buffer.num_elems as usize)
+    }
+
+    fn copy_from_slice(&self, src: &[T]) {
+        let mapped_slice;
+        unsafe {
+            mapped_slice = self.mapped_slice();
+        }
+        mapped_slice.copy_from_slice(src);
+    }
+}
+
+impl<T: Copy> GPUBuffer<T> for AllocatedBuffer<T> {
+    fn new(
+        device: &ash::Device,
+        num_elems: u64,
         mem_props: vk::PhysicalDeviceMemoryProperties,
         usage: vk::BufferUsageFlags,
         sharing_mode: vk::SharingMode,
         memory_type: vk::MemoryPropertyFlags,
     ) -> Self {
+        let size = size_of::<T>() as u64 * num_elems;
         unsafe {
             // create buffer handle
             let buffer_create_info = vk::BufferCreateInfo::default()
                 .size(size)
-                .usage(usage)
+                .usage(usage | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS)
                 .sharing_mode(sharing_mode);
             let buffer = device
                 .create_buffer(&buffer_create_info, None)
@@ -130,22 +209,27 @@ impl AllocatedBuffer {
             // allocate memory
             let buffer_memory = device
                 .allocate_memory(&mem_info, None)
-                .expect("Failed to allocate vertex buffer memory.");
+                .expect("Failed to allocate buffer memory.");
             device
                 .bind_buffer_memory(buffer, buffer_memory, 0)
-                .expect("Could not bind vertex buffer to its memory.");
+                .expect("Could not bind buffer to its memory.");
+
+            let address = device
+                .get_buffer_device_address(&vk::BufferDeviceAddressInfo::default().buffer(buffer));
 
             Self {
                 buffer: buffer,
                 allocation: buffer_memory,
+                address: address,
+                num_elems: num_elems,
+                _marker: PhantomData::default(),
             }
         }
     }
 
-    pub fn new_with_data<T: Copy>(
+    fn new_with_data(
         device: &ash::Device,
         data: &[T],
-        size: u64,
         mem_props: vk::PhysicalDeviceMemoryProperties,
         usage: vk::BufferUsageFlags,
         sharing_mode: vk::SharingMode,
@@ -154,30 +238,25 @@ impl AllocatedBuffer {
         command_buffer_reuse_fence: vk::Fence,
         queue: vk::Queue,
     ) -> Self {
-        let buffer = Self::new(device, size, mem_props, usage, sharing_mode, memory_type);
-        let copy_size = (size_of::<T>() * data.len()) as u64;
-        let staging_buffer = AllocatedBuffer::new(
+        let num_elems = data.len() as u64;
+        let buffer: AllocatedBuffer<T> = GPUBuffer::<T>::new(
+            device,
+            num_elems,
+            mem_props,
+            usage | vk::BufferUsageFlags::TRANSFER_DST,
+            sharing_mode,
+            memory_type,
+        );
+        let mut staging_buffer: MappedBuffer<T> = GPUBuffer::<T>::new(
             &device,
-            copy_size,
+            num_elems,
             mem_props,
             vk::BufferUsageFlags::TRANSFER_SRC,
             vk::SharingMode::EXCLUSIVE,
             vk::MemoryPropertyFlags::HOST_VISIBLE,
         );
+        staging_buffer.copy_from_slice(data);
         unsafe {
-            let staging_buffer_ptr = device
-                .map_memory(
-                    staging_buffer.allocation,
-                    0,
-                    copy_size,
-                    vk::MemoryMapFlags::empty(),
-                )
-                .expect("Failed to map device memory.");
-            let mut staging_buffer_slice =
-                Align::new(staging_buffer_ptr, align_of::<T>() as u64, copy_size);
-
-            staging_buffer_slice.copy_from_slice(data);
-
             record_submit_commandbuffer(
                 &device,
                 command_buffer,
@@ -187,25 +266,96 @@ impl AllocatedBuffer {
                 &[],
                 &[],
                 |device, command_buffer| {
-                    let copy_region = vk::BufferCopy::default().size(copy_size);
+                    let copy_region =
+                        vk::BufferCopy::default().size(staging_buffer.size_in_bytes());
                     device.cmd_copy_buffer(
                         command_buffer,
-                        staging_buffer.buffer,
+                        staging_buffer.buffer(),
                         buffer.buffer,
                         &[copy_region],
                     );
                 },
             );
             device.device_wait_idle().expect("Wait idle.");
-            device.unmap_memory(staging_buffer.allocation);
+            device.unmap_memory(staging_buffer.allocation());
             staging_buffer.destroy(device);
         }
 
         return buffer;
     }
-    pub fn new_with_data_sized<T: Copy>(
-        data: &[T],
+
+    fn device_address(&self) -> vk::DeviceAddress {
+        self.address
+    }
+
+    fn destroy(&mut self, device: &ash::Device) {
+        unsafe {
+            device.free_memory(self.allocation, None);
+            device.destroy_buffer(self.buffer, None);
+        }
+    }
+
+    fn allocation(&self) -> vk::DeviceMemory {
+        self.allocation
+    }
+
+    fn buffer(&self) -> vk::Buffer {
+        self.buffer
+    }
+
+    fn size_in_bytes(&self) -> u64 {
+        size_of::<T>() as u64 * self.num_elems
+    }
+}
+
+impl<T: Copy> GPUBuffer<T> for MappedBuffer<T> {
+    fn allocation(&self) -> vk::DeviceMemory {
+        self.allocated_buffer.allocation
+    }
+
+    fn buffer(&self) -> vk::Buffer {
+        self.allocated_buffer.buffer
+    }
+
+    fn size_in_bytes(&self) -> u64 {
+        self.allocated_buffer.size_in_bytes()
+    }
+
+    fn destroy(&mut self, device: &ash::Device) {
+        unsafe {
+            device.unmap_memory(self.allocated_buffer.allocation);
+        }
+        self.ptr = null_mut::<T>();
+        self.allocated_buffer.destroy(device);
+    }
+
+    fn new(
         device: &ash::Device,
+        num_elems: u64,
+        mem_props: vk::PhysicalDeviceMemoryProperties,
+        usage: vk::BufferUsageFlags,
+        sharing_mode: vk::SharingMode,
+        memory_type: vk::MemoryPropertyFlags,
+    ) -> Self {
+        let allocated_buffer: AllocatedBuffer<T> = GPUBuffer::<T>::new(
+            device,
+            num_elems,
+            mem_props,
+            usage,
+            sharing_mode,
+            memory_type | vk::MemoryPropertyFlags::HOST_VISIBLE,
+        );
+        let ptr = allocated_buffer.map_memory(device);
+
+        Self {
+            allocated_buffer: allocated_buffer,
+            ptr: ptr,
+        }
+    }
+
+    fn new_with_data(
+        device: &ash::Device,
+        data: &[T],
         mem_props: vk::PhysicalDeviceMemoryProperties,
         usage: vk::BufferUsageFlags,
         sharing_mode: vk::SharingMode,
@@ -213,37 +363,28 @@ impl AllocatedBuffer {
         command_buffer: vk::CommandBuffer,
         command_buffer_reuse_fence: vk::Fence,
         queue: vk::Queue,
-    ) -> AllocatedBuffer {
-        AllocatedBuffer::new_with_data(
+    ) -> Self {
+        let allocated_buffer: AllocatedBuffer<T> = GPUBuffer::<T>::new_with_data(
             device,
             data,
-            (size_of::<T>() * data.len()) as u64,
             mem_props,
             usage,
             sharing_mode,
-            memory_type,
+            memory_type | vk::MemoryPropertyFlags::HOST_VISIBLE,
             command_buffer,
             command_buffer_reuse_fence,
             queue,
-        )
-    }
-
-    pub fn device_address(&self, device: &Device) -> vk::DeviceAddress {
-        unsafe {
-            device.get_buffer_device_address(
-                &vk::BufferDeviceAddressInfo::default().buffer(self.buffer),
-            )
+        );
+        let ptr = allocated_buffer.map_memory(device);
+        Self {
+            allocated_buffer: allocated_buffer,
+            ptr: ptr,
         }
     }
-
-    pub fn destroy(self, device: &ash::Device) {
-        unsafe {
-            device.free_memory(self.allocation, None);
-            device.destroy_buffer(self.buffer, None);
-        }
+    fn device_address(&self) -> vk::DeviceAddress {
+        self.allocated_buffer.device_address()
     }
 }
-
 pub struct CBT {
     pub depth: u32, // number of edges from the root to a furthest leaf
     pub interior: Vec<u32>,
@@ -420,9 +561,9 @@ impl CBT {
     }
 }
 
-pub const UNCHANGED_ELEMENT: u8 = 0;
-pub const SIMPLIFY: u8 = 1;
-pub const SPLIT: u8 = 2;
+pub const UNCHANGED_ELEMENT: u32 = 0;
+pub const SIMPLIFY: u32 = 1;
+pub const SPLIT: u32 = 2;
 
 pub const NO_SPLIT: u32 = 0;
 pub const CENTER_SPLIT: u32 = 1;
@@ -455,7 +596,7 @@ pub fn split_element(
     allocation_buffer: &mut [u32], // stores heapids of bisectors that need to allocate memory
     heapid_buffer: &[u32],         // stores heapids of bisectors
     bisector_command_buffer: &mut [AtomicU32],
-    bisector_state_buffer: &[u8],
+    bisector_state_buffer: &[u32],
 ) {
     let curr_neighbors = neighbors_buffer[curr_id as usize];
 
@@ -670,7 +811,7 @@ pub fn allocate(
     cbt: &CBT,
     bisector_command_buffer: &[AtomicU32],
     allocation_indices_buffer: &mut [[u32; 4]],
-    bisector_state_buffer: &mut [u8],
+    bisector_state_buffer: &mut [u32],
 ) {
     let command = bisector_command_buffer[curr_id as usize].load(Ordering::Relaxed);
 
@@ -920,7 +1061,7 @@ pub fn prepare_merge(
     curr_id: u32,
     neighbor_buffer: &mut [[u32; 3]],
     heap_id_buffer: &[u32],
-    bisector_state_buffer: &[u8],
+    bisector_state_buffer: &[u32],
     simplification_counter: &AtomicU32,
     simplification_buffer: &mut [u32],
 ) {
@@ -1028,7 +1169,7 @@ pub fn merge(
 }
 
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct SceneDataGPU {
     // written once at initialization
     pub root_bisector_vertices: vk::DeviceAddress,
@@ -1061,8 +1202,6 @@ pub struct SceneDataGPU {
     // draw
     pub vertex_buffer: vk::DeviceAddress,
 
-    pub curr_id_buffer: vk::DeviceAddress,
-
     // integers
     pub num_memory_blocks: u32,
     pub base_depth: u32,
@@ -1070,54 +1209,42 @@ pub struct SceneDataGPU {
     pub debug_counter: u32,
 }
 
-pub struct SceneCPUHandles<'a> {
-    // dbg
-    pub cbt_interior_mapped: &'a [u32],
-    pub cbt_leaves_mapped: &'a [u32],
-    pub vertex_buffer_mapped: &'a [[Vec3; 3]],
-    pub heapid_buffer_mapped: &'a [u32],
-    pub root_bisector_buffer_mapped: &'a [[Vec3; 3]],
-    pub neighbors_buffer_mapped: &'a [[u32; 3]],
-    pub allocation_indices_mapped: &'a [[u32; 4]],
-    pub bisector_command_mapped: &'a [u32],
-    pub splitting_buffer_mapped: &'a [u32],
-    pub merging_buffer_mapped: &'a [u32],
-
+pub struct SceneCPUHandles {
     // written once at initialization
-    pub root_bisector_vertices: AllocatedBuffer,
+    pub root_bisector_vertices: AllocatedBuffer<[Vec3; 3]>,
     // our concurrent binary tree
     // cbt: CBT,
-    pub cbt_interior: AllocatedBuffer,
-    pub cbt_leaves: AllocatedBuffer,
+    pub cbt_interior: AllocatedBuffer<u32>,
+    pub cbt_leaves: AllocatedBuffer<u32>,
 
     // classification stage
     // pub classification_pipeline: vk::Pipeline,
     pub classify_pipeline: vk::Pipeline,
-    pub bisector_state_buffer: AllocatedBuffer,
+    pub bisector_state_buffer: AllocatedBuffer<u32>,
 
     // prepare split
     pub dispatch_split_pipeline: vk::Pipeline,
-    pub bisector_split_command_buffer: AllocatedBuffer,
-    pub neighbors_buffer: AllocatedBuffer,
-    pub splitting_buffer: AllocatedBuffer,
-    pub heapid_buffer: AllocatedBuffer,
+    pub bisector_split_command_buffer: AllocatedBuffer<u32>,
+    pub neighbors_buffer: AllocatedBuffer<[u32; 3]>,
+    pub splitting_buffer: AllocatedBuffer<u32>,
+    pub heapid_buffer: AllocatedBuffer<u32>,
 
     // allocate
     pub dispatch_allocate_pipeline: vk::Pipeline,
-    pub allocation_indices_buffer: AllocatedBuffer,
+    pub allocation_indices_buffer: AllocatedBuffer<[u32; 4]>,
 
     // split
-    pub want_split_buffer: AllocatedBuffer,
+    pub want_split_buffer: AllocatedBuffer<u32>,
 
     // prepare merge
     pub dispatch_prepare_merge_pipeline: vk::Pipeline,
-    pub want_merge_buffer: AllocatedBuffer,
+    pub want_merge_buffer: AllocatedBuffer<u32>,
 
     // merge
-    pub merging_bisector_buffer: AllocatedBuffer,
+    pub merging_bisector_buffer: AllocatedBuffer<u32>,
     pub vertex_compute_pipeline: vk::Pipeline,
     // draw
-    pub vertex_buffer: AllocatedBuffer,
+    pub vertex_buffer: AllocatedBuffer<[Vec3; 3]>,
 
     // reset
     pub reset_pipeline: vk::Pipeline,
@@ -1129,12 +1256,10 @@ pub struct SceneCPUHandles<'a> {
     pub merge_pipeline: vk::Pipeline,
     pub reduce_pipeline: vk::Pipeline,
     pub post_reduce_pipeline: vk::Pipeline,
-
-    pub curr_id_buffer: AllocatedBuffer,
 }
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
-pub struct DispatchSizeGPU {
+pub struct DispatchDataGPU {
     // written to by reduce
     pub draw_indirect_command: vk::DrawIndirectCommand,
 
@@ -1172,7 +1297,7 @@ pub struct PipelineData {
     pub heapid_buffer: Vec<u32>,
     pub allocation_indices_buffer: Vec<[u32; 4]>,
     // UNCHANGED, SPLIT, OR MERGE
-    pub bisector_state_buffer: Vec<u8>,
+    pub bisector_state_buffer: Vec<u32>,
     // has to be u32 for atomic reasons :(
     pub bisector_split_command_buffer: Vec<AtomicU32>,
 

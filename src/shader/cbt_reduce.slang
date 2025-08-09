@@ -164,7 +164,6 @@ void reduce(uint3 threadId: SV_DispatchThreadID)
     GroupMemoryBarrier();
 
     // level n-12 [0, 1)
-    uint final = 120394819u;
     {
         let index_in_level = tid;
         if (index_in_level < 1)
@@ -173,19 +172,18 @@ void reduce(uint3 threadId: SV_DispatchThreadID)
             let sum = buf1[2 * index_in_level] + buf1[2 * index_in_level + 1];
             buf0[index_in_level] = sum;
             interior[interior_offset + index_in_level] = sum;
-            final = sum;
         }
     }
     GroupMemoryBarrier();
     if (threadId.x == 0 && threadId.y == 0 && threadId.z == 0)
     {
-        // let num_bisectors : uint = buf0[0];
-        let num_bisectors : uint = final;
+        let num_bisectors : uint = buf0[0];
         pc.dispatch.remaining_memory_count.store((int)(1 << 17) - (int)num_bisectors);
         pc.dispatch.num_allocated_blocks = num_bisectors;
         pc.dispatch.draw_indirect_command.vertex_count = 3 * num_bisectors;
         pc.dispatch.dispatch_vertex_compute_command.x = div_ceil(num_bisectors, WORKGROUP_SIZE);
     }
+    return;
     /*
         for (int i = 0; i < 4; ++i)
         {
@@ -225,4 +223,3 @@ void reduce(uint3 threadId: SV_DispatchThreadID)
     return;
     */
 }
-

@@ -31,15 +31,13 @@ struct SceneData
     // draw
     float3 *vertex_buffer;
 
-    uint *currid_buffer;
-
     // integers
     uint num_memory_blocks;
     uint base_depth;
     uint cbt_depth;
     uint debug_counter;
 }
-
+// 116 bytes
 struct DrawIndirectCommand
 {
     uint vertex_count;
@@ -80,8 +78,6 @@ struct DispatchData
 struct PushConstant
 {
     float4x4 view_project;
-    float3 *positions;
-    uint32_t *curr_id;
     SceneData *scene;
     DispatchData *dispatch;
     float3 cam_pos;

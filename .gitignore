@@ -1,5 +1,5 @@
 /target
 *.pdf
 *.mov
-capture.gputrace
+*.gputrace
 .DS_Store

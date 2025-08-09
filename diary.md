@@ -209,3 +209,41 @@ leaf: 0b1111100100
 - PERLIN NOISE
   - IN THE COMPUTE SHADER FUCK YOU
 - FANCY FRAGMENTS
+
+# GPU Debugging Capture 1
+scene buffer is 0x157776700
+cbt interior is buffer 0x14770d2e0
+cbt leaves is probably buffer 0x158b14dd0
+indirect buffer: 0x1477131e0
+
+
+- frame n-1
+  - 14269: cbt reduce, 12888 bisectors
+    - scene is 0x10007e40000
+    - cbt_interior is 0x100000f00000
+    - cbt_leaves is 0x100000e38000
+- frame n
+  - 14735: cbt reduce, 24576 bisectors
+    - scene is 0x10007e40000
+    - cbt_interior is 0x100000f00000 = 0b100000000000000000000111100000000000000000000
+    - cbt_leaves is 0x100000e38000 = 0100000000000000000000111000111000000000000000
+  - 14781: vertex compute
+    - pc cbt interior[0] is 24576
+      - but so are other elements??
+- frame n+1
+- 15202: cbt reduce, everything is zero
+  - push constants
+    - scene is 0x10007e40000
+    - cbt_interior is 0x7003_00007002 = 123158187241474 = 0b11100000000001100000000000000000111000000000010
+      - 0x7002 = 28674
+      - 0x7003 = 28675
+    - cbt_leaves is 0x7005_00007004 = 123166777176068 = 0b11100000000010100000000000000000111000000000100
+
+# GPU Debugging Capture 2
+dispatch buffer: 0x151811990
+- root_bisector vertices is not (offset 0)
+- cbt_interior is saved from overrun  (offset 8)
+-
+
+# Well we fixed it
+I don't even know what the cause was. Fuck my life man
