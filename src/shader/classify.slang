@@ -2,6 +2,11 @@
 
 TriState classify_triangle(float3[3] verts, uint heapid)
 {
+    if (heap_id_depth(heapid) < 28)
+    {
+        return TriState::BISECT_ELEMENT;
+    }
+    return TriState::UNCHANGED_ELEMENT;
     let normal = cross(verts[1] - verts[0], verts[2] - verts[1]);
     /*
     let depth = heap_id_depth(heapid);

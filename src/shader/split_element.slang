@@ -45,11 +45,11 @@ void split_element(uint3 tid: SV_DispatchThreadID)
     uint current_depth = heap_id_depth(heapid); // 3
 
     uint twin_id = curr_neighbors[TWIN]; // 3
-    int max_required_memory = (twin_id == INVALID_INDEX)                     ? 1
-                              : (neighbors_buffer[twin_id][TWIN] == curr_id) ? 2
-                                                                             : 2 * (current_depth - base_depth) - 1;
+    int max_required_memory = (twin_id == INVALID_INDEX)                     ? 2
+                              : (neighbors_buffer[twin_id][TWIN] == curr_id) ? 4
+                                                                             : 3 * (current_depth - base_depth);
     // 2
-    uint remaining_memory = pc.dispatch.remaining_memory_count.add(-max_required_memory); // big number
+    int remaining_memory = pc.dispatch.remaining_memory_count.add(-max_required_memory); // big number
 
     if (remaining_memory < max_required_memory)
     {
@@ -67,9 +67,8 @@ void split_element(uint3 tid: SV_DispatchThreadID)
     uint target_location = pc.dispatch.splitting_buffer_count.add(1);
     splitting_buffer[target_location] = curr_id;
 
-    int used_memory = 1;
-    bool done = false;
-    while (!done)
+    int used_memory = 2; // one for each split child
+    while (true)
     {
         if (twin_id == INVALID_INDEX)
         {
@@ -89,8 +88,8 @@ void split_element(uint3 tid: SV_DispatchThreadID)
                 splitting_buffer[alloc_loc] = twin_id;
                 used_memory += 1;
             }
-            // break;
-            done = true;
+            break;
+            // done = true;
         }
         else
         {
@@ -101,8 +100,8 @@ void split_element(uint3 tid: SV_DispatchThreadID)
             if (twin_prev_command != NO_SPLIT)
             {
                 used_memory += 1;
-                // break;
-                done = true;
+                break;
+                // done = true;
             }
             else
             {

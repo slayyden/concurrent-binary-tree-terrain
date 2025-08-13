@@ -247,3 +247,123 @@ dispatch buffer: 0x151811990
 
 # Well we fixed it
 I don't even know what the cause was. Fuck my life man
+
+# GPU Debugging Capture 3
+- i wonder if we're facing the same bug somehow
+
+buffer view unreliable??
+
+cbt interior buffer: 0x1212347f0
+
+(cbt_reduce) → 12
+1173 (reset) -> 12
+1397 (prepare merge dispatch) -> 12
+1475 (cbt_reduce) -> 18
+1586 (cbt_reduce) -> 18
+
+1810 (prepare merge dispatch) -> 18
+1888 (cbt_reduce) cbt_interior	uint*	0x100005b8000 → 30
+1999 (reset) cbt_interior	uint*	0x100005b8000 → 30
+
+2223 (prepare merge dispatch) -> 30
+2301 (cbt_reduce) cbt_interior	uint*	0x100005b8000 → 54
+2412 (reset) cbt_interior	uint*	0x100005b8000 → 54
+
+2636 (prepare merge dispatch) cbt_interior	uint*	0x100005b8000 → 54
+2714 (cbt_reduce) cbt_interior	uint*	0x100005b8000 → 85
+
+2893 (classify)cbt_interior	uint*	0x100005b8000 → 85
+3049 (prepare merge dispatch) cbt_interior	uint*	0x100005b8000 → 85
+3127 (cbt_reduce) cbt_interior	uint*	0x100005b8000 → 146
+3127 (cbt_reduce 2) cbt_interior	uint*	0x100005b8000 → 146
+
+wtf is happening here??
+3153 (vertex compute 0) cbt_interior	uint*	0x100005b8000 → 146
+3153 (vertex compute 0 2) cbt_interior	uint*	0x100005b8000 → 146
+3153 (vertex compute 64) cbt_interior	uint*	0x100005b8000 → 146
+3153 (vertex compute 64 2) cbt_interior	uint*	0x100005b8000 → 144
+3153 (vertex compute 96) cbt_interior	uint*	0x100005b8000 → 146
+3153 (vertex compute 96 2) cbt_interior	uint*	0x100005b8000 → 146
+3153 (vertex compute 128) cbt_interior	uint*	0x100005b8000 → 144
+3153 (vertex compute 128 2) cbt_interior	uint*	0x100005b8000 → 146
+3153 (vertex compute 128 3) cbt_interior	uint*	0x100005b8000 → 144
+3153 (vertex compute 160) cbt_interior	uint*	0x100005b8000 → 146
+
+3153 (vertex compute 0 a) 146
+3153 (vertex compute 32 a) 146
+3153 (vertex compute 64 a) 144
+3153 (vertex compute 96 a) 146
+3153 (vertex compute 128 a) 144
+3153 (vertex compute 160 a) 144
+
+3153 (vertex compute 32 b) 146
+3153 (vertex compute 64 b) 146
+
+3238 (reset) cbt_interior	uint*	0x100005b8000 → 144
+3238 (reset 2) cbt_interior	uint*	0x100005b8000 → 144
+
+3306 (classify) cbt_interior	uint*	0x100005b8000 → 146
+3450 (cbt_reduce) cbt_interior	uint*	0x100005b8000 → 220
+3651 (reset) cbt_interior	uint*	0x100005b8000 → 220
+
+3719 (classify) cbt_interior	uint*	0x100005b8000 → 212
+3719 (classify 2) cbt_interior	uint*	0x100005b8000 → 220
+
+3719 (classify 0 a) cbt_interior	uint*	0x100005b8000 → 213
+3719 (classify 0 a) cbt_interior	uint*	0x100005b8000 → 213
+
+3745 (prepare split dispatch) cbt_interior	uint*	0x100005b8000 → 220
+3875 (prepare merge dispatch) cbt_interior	uint*	0x100005b8000 → 223
+3953 (cbt_reduce) cbt_interior	uint*	0x100005b8000 → 341
+4064 (reset) cbt_interior	uint*	0x100005b8000 → 332
+
+4132 (classify) cbt_interior	uint*	0x100005b8000 → 332
+4288 (prepare merge dispatch) cbt_interior	uint*	0x100005b8000 → 333
+4366 (cbt_reduce) cbt_interior	uint*	0x100005b8000 → 492
+4477 (reset) cbt_interior	uint*	0x100005b8000 → 470
+
+6844 (cbt_reduce)
+  cbt_interior	uint*	0x100005b8000 → 4230
+6870 (reset)
+  cbt_interior	uint*	0x100005b8000 → 3318
+
+18821 (cbt_reduce)
+  cbt_interior	uint*	0x100005b8000 → 124628
+18847 (reset)
+  cbt_interior	uint*	0x100005b8000 → 116407
+
+19647 (cbt reduce):
+  cbt_interior	uint*	0x100005b8000 → 127170
+19673 (vertex compute):
+  cbt_interior	uint*	0x100005b8000 → 126971 (-199)
+19758 (reset):
+  cbt_interior	uint*	0x100005b8000 → 126620 (-351)
+19826 (classify):
+  cbt_interior	uint*	0x100005b8000 → 126681 (+21)
+19852 (prepare split dispatch)
+  cbt_interior	uint*	0x100005b8000 → 127006 (+25)
+
+# GPU Debugging Capture 4
+cbt interior: 0x12a738190
+
+
+no consistency between the SAME thread in the SAME compute shader
+shader view:
+  reduce: 29622
+  vertex compute: 32669
+buffer view:
+  classify: 34267
+  prepare_merge: 34267
+  reduce: 34267
+  vertex compute: 34267
+  reset: 34267
+
+
+how about leaves:
+- 3758093807
+- 3758093807
+- 3758093807
+leaves are consistent
+
+# Session 5
+allocation_indices fails with tid 43584

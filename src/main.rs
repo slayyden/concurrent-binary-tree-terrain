@@ -1,27 +1,19 @@
 // use ash::Instance;
 use ash::{
-    Device, Entry,
-    ext::{custom_border_color, debug_utils},
+    Entry,
+    ext::debug_utils,
     khr::{surface, swapchain},
-    util::{Align, read_spv},
-    vk::{self, PipelineCreateFlags, PipelineShaderStageCreateFlags, ShaderStageFlags},
+    util::read_spv,
+    vk::{
+        self, BufferUsageFlags, CommandBufferSubmitInfo, PhysicalDeviceMemoryProperties,
+        PipelineStageFlags2, ShaderStageFlags,
+    },
 };
 use dirt_jam::*;
 use glam::{Mat4, Vec3, Vec3A};
-use std::{
-    cmp::{max, min},
-    error::Error,
-    ffi::CStr,
-    io::Cursor,
-    iter::Map,
-    os::raw::c_char,
-    u64,
-};
-use std::{f32::consts::PI, ffi::c_void};
-use std::{
-    mem::offset_of,
-    sync::atomic::{AtomicU32, Ordering},
-};
+use std::f32::consts::PI;
+use std::{cmp::max, error::Error, ffi::CStr, io::Cursor, os::raw::c_char, u64};
+use std::{mem::offset_of, sync::atomic::Ordering};
 use winit::{
     application::ApplicationHandler,
     event::{DeviceEvent, ElementState, KeyEvent, WindowEvent},
@@ -30,12 +22,6 @@ use winit::{
     raw_window_handle::{HasDisplayHandle, HasWindowHandle},
     window::{Window, WindowId},
 };
-
-#[repr(C)]
-struct Vertex {
-    position: [f32; 3],
-    color: [f32; 3],
-}
 
 #[repr(C)]
 #[derive(Debug)]
@@ -52,10 +38,10 @@ struct PushConstants {
 struct State {
     // dbg
     window: Window,
-    instance: ash::Instance,
+    // instance: ash::Instance,
     device: ash::Device,
-    setup_commands_reuse_fence: vk::Fence,
-    setup_command_buffer: vk::CommandBuffer,
+    // setup_commands_reuse_fence: vk::Fence,
+    // setup_command_buffer: vk::CommandBuffer,
     draw_command_buffers: [vk::CommandBuffer; 3],
     present_queue: vk::Queue,
     pipeline: vk::Pipeline,
@@ -74,9 +60,6 @@ struct State {
 
     resolution: vk::Extent2D,
     command_reuse_fences: [vk::Fence; 3],
-
-    algorithm_data: PipelineData,
-    iteration_counter: u32,
 
     scene_buffer_handles: SceneCPUHandles,
     scene_buffer: MappedBuffer<SceneDataGPU>,
@@ -160,16 +143,6 @@ impl State {
             )
             .expect("Could not begin command buffer.");
 
-            let timeline_semaphores = [self.frame_pace_semaphore];
-            let timeline_semaphore_wait_values = [self.frame_index];
-            dev.wait_semaphores(
-                &vk::SemaphoreWaitInfo::default()
-                    .semaphores(&timeline_semaphores)
-                    .values(&timeline_semaphore_wait_values),
-                u64::MAX,
-            )
-            .expect("Timeline semaphore wait");
-
             // transitioning
             let pre_barrier = vk::ImageMemoryBarrier::default()
                 .image(self.present_images[present_index as usize])
@@ -210,7 +183,7 @@ impl State {
                 0,
                 byteslice(&push_constants),
             );
-
+            /*
             let memory_barrier = vk::MemoryBarrier::default()
                 .src_access_mask(vk::AccessFlags::SHADER_WRITE)
                 .dst_access_mask(vk::AccessFlags::SHADER_READ);
@@ -224,55 +197,116 @@ impl State {
                     &[],
                     &[],
                 )
+            }; */
+
+            let debug_barrier = vk::MemoryBarrier2::default()
+                .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
+                .src_access_mask(vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE)
+                .dst_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
+                .dst_access_mask(vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE);
+            let barrier = vk::MemoryBarrier2::default()
+                .src_access_mask(vk::AccessFlags2::MEMORY_WRITE)
+                .src_stage_mask(vk::PipelineStageFlags2::COMPUTE_SHADER)
+                .dst_access_mask(vk::AccessFlags2::MEMORY_READ)
+                .dst_stage_mask(vk::PipelineStageFlags2::COMPUTE_SHADER);
+            let barrier = debug_barrier;
+            let compute_write_compute_read_memory_barrier = {
+                || {
+                    dev.cmd_pipeline_barrier2(
+                        *cmdbuf,
+                        &vk::DependencyInfo::default().memory_barriers(&[barrier]),
+                    );
+                }
             };
+            let barrier = vk::MemoryBarrier2::default()
+                .src_access_mask(vk::AccessFlags2::MEMORY_WRITE)
+                .src_stage_mask(vk::PipelineStageFlags2::COMPUTE_SHADER)
+                .dst_access_mask(vk::AccessFlags2::INDIRECT_COMMAND_READ)
+                // DRAW_INDIRECT includes consumption of indirect command buffers by an indirect draw, compute, or raytracing command
+                .dst_stage_mask(vk::PipelineStageFlags2::DRAW_INDIRECT);
+            let barrier = debug_barrier;
+            let compute_write_indirect_read_barrier = {
+                || {
+                    dev.cmd_pipeline_barrier2(
+                        *cmdbuf,
+                        &vk::DependencyInfo::default().memory_barriers(&[barrier]),
+                    );
+                }
+            };
+            let barrier = vk::MemoryBarrier2::default()
+                .src_access_mask(vk::AccessFlags2::MEMORY_WRITE)
+                .src_stage_mask(vk::PipelineStageFlags2::COMPUTE_SHADER)
+                .dst_access_mask(vk::AccessFlags2::MEMORY_READ)
+                .dst_stage_mask(vk::PipelineStageFlags2::ALL_GRAPHICS); // includes draw indirect
+            let barrier = debug_barrier;
+            let compute_write_graphics_read_memory_barrier = {
+                || {
+                    dev.cmd_pipeline_barrier2(
+                        *cmdbuf,
+                        &vk::DependencyInfo::default().memory_barriers(&[barrier]),
+                    );
+                }
+            };
+            // compute_write_compute_read_memory_barrier();
 
             // COMPUTE
             // classify
-            dev.cmd_bind_pipeline(
-                *cmdbuf,
-                vk::PipelineBindPoint::COMPUTE,
-                self.scene_buffer_handles.classify_pipeline,
-            );
+            {
+                dev.cmd_bind_pipeline(
+                    *cmdbuf,
+                    vk::PipelineBindPoint::COMPUTE,
+                    self.scene_buffer_handles.classify_pipeline,
+                );
 
-            dev.cmd_dispatch_indirect(
-                *cmdbuf,
-                self.dispatch_buffer.buffer(),
-                offset_of!(DispatchDataGPU, dispatch_vertex_compute_command) as u64,
-            );
+                dev.cmd_dispatch_indirect(
+                    *cmdbuf,
+                    self.dispatch_buffer.buffer(),
+                    offset_of!(DispatchDataGPU, dispatch_vertex_compute_command) as u64,
+                );
+            }
+            // compute to compute barrier
+            compute_write_compute_read_memory_barrier();
 
-            global_memory_barrier();
             // set up indirect buffer for splitting
-            dev.cmd_bind_pipeline(
-                *cmdbuf,
-                vk::PipelineBindPoint::COMPUTE,
-                self.scene_buffer_handles.dispatch_split_pipeline,
-            );
-            dev.cmd_dispatch(*cmdbuf, 1, 1, 1);
-            global_memory_barrier();
+            {
+                dev.cmd_bind_pipeline(
+                    *cmdbuf,
+                    vk::PipelineBindPoint::COMPUTE,
+                    self.scene_buffer_handles.dispatch_split_pipeline,
+                );
+                dev.cmd_dispatch(*cmdbuf, 1, 1, 1);
+            }
 
+            // compute write -> indirect buffer read
+            compute_write_indirect_read_barrier();
             // splitting
-            dev.cmd_bind_pipeline(
-                *cmdbuf,
-                vk::PipelineBindPoint::COMPUTE,
-                self.scene_buffer_handles.split_element_pipeline,
-            );
-            dev.cmd_dispatch_indirect(
-                *cmdbuf,
-                self.dispatch_buffer.buffer(),
-                offset_of!(DispatchDataGPU, dispatch_split_command) as u64,
-            );
-            global_memory_barrier();
+            {
+                dev.cmd_bind_pipeline(
+                    *cmdbuf,
+                    vk::PipelineBindPoint::COMPUTE,
+                    self.scene_buffer_handles.split_element_pipeline,
+                );
+                dev.cmd_dispatch_indirect(
+                    *cmdbuf,
+                    self.dispatch_buffer.buffer(),
+                    offset_of!(DispatchDataGPU, dispatch_split_command) as u64,
+                );
+            }
+            compute_write_compute_read_memory_barrier();
 
             // set up indirect dispatch for allocation
-            dev.cmd_bind_pipeline(
-                *cmdbuf,
-                vk::PipelineBindPoint::COMPUTE,
-                self.scene_buffer_handles.dispatch_allocate_pipeline,
-            );
-            dev.cmd_dispatch(*cmdbuf, 1, 1, 1);
-            global_memory_barrier();
+            {
+                dev.cmd_bind_pipeline(
+                    *cmdbuf,
+                    vk::PipelineBindPoint::COMPUTE,
+                    self.scene_buffer_handles.dispatch_allocate_pipeline,
+                );
+                dev.cmd_dispatch(*cmdbuf, 1, 1, 1);
+            }
+            compute_write_indirect_read_barrier();
 
             // allocate
+
             dev.cmd_bind_pipeline(
                 *cmdbuf,
                 vk::PipelineBindPoint::COMPUTE,
@@ -283,8 +317,9 @@ impl State {
                 self.dispatch_buffer.buffer(),
                 offset_of!(DispatchDataGPU, dispatch_allocate_command) as u64,
             );
-            global_memory_barrier();
+            compute_write_compute_read_memory_barrier();
 
+            // compute -> compute global memory barrier
             // update pointers
             dev.cmd_bind_pipeline(
                 *cmdbuf,
@@ -296,8 +331,9 @@ impl State {
                 self.dispatch_buffer.buffer(),
                 offset_of!(DispatchDataGPU, dispatch_allocate_command) as u64,
             );
-            global_memory_barrier();
+            compute_write_compute_read_memory_barrier();
 
+            // compute -> compute global memory barrier
             // set up indirect dispatch for merging
             dev.cmd_bind_pipeline(
                 *cmdbuf,
@@ -305,7 +341,7 @@ impl State {
                 self.scene_buffer_handles.dispatch_prepare_merge_pipeline,
             );
             dev.cmd_dispatch(*cmdbuf, 1, 1, 1);
-            global_memory_barrier();
+            compute_write_indirect_read_barrier();
 
             // prepare merge
             dev.cmd_bind_pipeline(
@@ -318,8 +354,9 @@ impl State {
                 self.dispatch_buffer.buffer(),
                 offset_of!(DispatchDataGPU, dispatch_prepare_merge_command) as u64,
             );
-            global_memory_barrier();
+            compute_write_compute_read_memory_barrier();
 
+            // compute -> compute global memory barrier
             // merge
             dev.cmd_bind_pipeline(
                 *cmdbuf,
@@ -331,7 +368,8 @@ impl State {
                 self.dispatch_buffer.buffer(),
                 offset_of!(DispatchDataGPU, dispatch_prepare_merge_command) as u64,
             );
-            global_memory_barrier();
+            compute_write_compute_read_memory_barrier();
+            // compute -> compute global memory barrier
             // reduce
             dev.cmd_bind_pipeline(
                 *cmdbuf,
@@ -340,41 +378,9 @@ impl State {
             );
             dev.cmd_dispatch(*cmdbuf, 1, 1, 1);
 
-            let buffer_barrier = vk::BufferMemoryBarrier::default()
-                .buffer(self.dispatch_buffer.buffer())
-                .size(size_of::<DispatchDataGPU>() as u64)
-                .src_access_mask(vk::AccessFlags::SHADER_WRITE) // writer (post_reduce)
-                .dst_access_mask(
-                    vk::AccessFlags::INDIRECT_COMMAND_READ |   // indirect draw
-                    vk::AccessFlags::VERTEX_ATTRIBUTE_READ, // vertex shader reads
-                );
-            dev.cmd_pipeline_barrier(
-                *cmdbuf,
-                vk::PipelineStageFlags::COMPUTE_SHADER,
-                vk::PipelineStageFlags::DRAW_INDIRECT | vk::PipelineStageFlags::VERTEX_INPUT,
-                vk::DependencyFlags::empty(),
-                &[],
-                &[buffer_barrier],
-                &[],
-            );
-            let buffer_barrier = vk::BufferMemoryBarrier::default()
-                .buffer(self.dispatch_buffer.buffer())
-                .size(size_of::<DispatchDataGPU>() as u64)
-                .src_access_mask(vk::AccessFlags::SHADER_WRITE) // what the writer did
-                .dst_access_mask(
-                    vk::AccessFlags::INDIRECT_COMMAND_READ |   // cmd_draw_indirect
-                    vk::AccessFlags::VERTEX_ATTRIBUTE_READ, // vertex shader reads
-                );
+            // compute -> compute global memory barrier AND indirect read
+            compute_write_compute_read_memory_barrier();
 
-            dev.cmd_pipeline_barrier(
-                *cmdbuf,
-                vk::PipelineStageFlags::COMPUTE_SHADER,
-                vk::PipelineStageFlags::DRAW_INDIRECT | vk::PipelineStageFlags::VERTEX_INPUT,
-                vk::DependencyFlags::empty(),
-                &[],
-                &[buffer_barrier],
-                &[],
-            );
             // vertex compute
             dev.cmd_bind_pipeline(
                 *cmdbuf,
@@ -386,19 +392,8 @@ impl State {
                 self.dispatch_buffer.buffer(),
                 offset_of!(DispatchDataGPU, dispatch_vertex_compute_command) as u64,
             );
-            global_memory_barrier();
-            let graphics_barrier = vk::MemoryBarrier::default()
-                .src_access_mask(vk::AccessFlags::SHADER_WRITE)
-                .dst_access_mask(vk::AccessFlags::INDIRECT_COMMAND_READ);
-            dev.cmd_pipeline_barrier(
-                *cmdbuf,
-                vk::PipelineStageFlags::COMPUTE_SHADER,
-                vk::PipelineStageFlags::DRAW_INDIRECT,
-                vk::DependencyFlags::empty(),
-                &[graphics_barrier],
-                &[],
-                &[],
-            );
+            // compute -> graphics global memory barrier AND indirect read
+            compute_write_graphics_read_memory_barrier();
             dev.cmd_begin_rendering(*cmdbuf, &rendering_info);
 
             // RENDERING CORE
@@ -447,16 +442,8 @@ impl State {
 
             dev.cmd_end_rendering(*cmdbuf);
 
-            dev.cmd_pipeline_barrier(
-                *cmdbuf,
-                vk::PipelineStageFlags::ALL_COMMANDS,
-                vk::PipelineStageFlags::COMPUTE_SHADER,
-                vk::DependencyFlags::empty(),
-                &[memory_barrier],
-                &[],
-                &[],
-            );
-
+            // no barrier needed
+            compute_write_compute_read_memory_barrier();
             // reset
             dev.cmd_bind_pipeline(
                 *cmdbuf,
@@ -464,15 +451,6 @@ impl State {
                 self.scene_buffer_handles.reset_pipeline,
             );
             dev.cmd_dispatch(*cmdbuf, 1, 1, 1);
-            dev.cmd_pipeline_barrier(
-                *cmdbuf,
-                vk::PipelineStageFlags::ALL_COMMANDS,
-                vk::PipelineStageFlags::ALL_COMMANDS,
-                vk::DependencyFlags::empty(),
-                &[memory_barrier],
-                &[],
-                &[],
-            );
 
             // transitioning out
             let post_barrier = vk::ImageMemoryBarrier::default()
@@ -501,35 +479,48 @@ impl State {
             );
 
             // done!
-            dev.signal_semaphore(
-                &vk::SemaphoreSignalInfo::default()
-                    .semaphore(self.frame_pace_semaphore)
-                    .value(self.frame_index + 1),
-            )
-            .expect("Timeline semaphore signal");
             dev.end_command_buffer(*cmdbuf)
                 .expect("End command buffer.");
 
             {
-                let command_buffers = vec![*cmdbuf];
-                // let wait_semaphores = [self.present_complete_semaphore[semaphore_index]];
-                let signal_semaphores = [self.render_complete_semaphore[semaphore_index]];
+                let command_buffer_infos =
+                    [CommandBufferSubmitInfo::default().command_buffer(*cmdbuf)];
+                let wait_semaphore_infos = [
+                    // binary semaphore
+                    vk::SemaphoreSubmitInfo::default()
+                        .stage_mask(PipelineStageFlags2::ALL_COMMANDS)
+                        .semaphore(self.present_complete_semaphore[semaphore_index]),
+                    // timeline semaphore
+                    vk::SemaphoreSubmitInfo::default()
+                        .stage_mask(PipelineStageFlags2::ALL_COMMANDS)
+                        .semaphore(self.frame_pace_semaphore)
+                        .value(self.frame_index),
+                ];
+                let signal_semaphore_infos = [
+                    // binary semaphore
+                    vk::SemaphoreSubmitInfo::default()
+                        .stage_mask(PipelineStageFlags2::ALL_COMMANDS)
+                        .semaphore(self.render_complete_semaphore[semaphore_index]),
+                    // timeline semaphore
+                    vk::SemaphoreSubmitInfo::default()
+                        .stage_mask(PipelineStageFlags2::ALL_COMMANDS)
+                        .semaphore(self.frame_pace_semaphore)
+                        .value(self.frame_index + 1), // next frame is ready to process
+                ];
 
-                let submit_info = vk::SubmitInfo::default()
-                    .wait_semaphores(&[])
-                    // .wait_dst_stage_mask(&[vk::PipelineStageFlags::ALL_COMMANDS])
-                    .wait_dst_stage_mask(&[])
-                    .command_buffers(&command_buffers)
-                    .signal_semaphores(&signal_semaphores);
+                let submit_info = vk::SubmitInfo2::default()
+                    .command_buffer_infos(&command_buffer_infos)
+                    .wait_semaphore_infos(&wait_semaphore_infos)
+                    .signal_semaphore_infos(&signal_semaphore_infos);
 
-                dev.queue_submit(
+                dev.queue_submit2(
                     self.present_queue,
                     &[submit_info],
                     self.command_reuse_fences[frame_fence_index],
                 )
                 .expect("Queue Submit");
             }
-
+            dev.queue_wait_idle(self.present_queue).expect("wait idle");
             {
                 let wait_semaphores = [self.render_complete_semaphore[semaphore_index]];
                 let swapchain = [self.swapchain];
@@ -542,147 +533,35 @@ impl State {
                     .queue_present(self.present_queue, &present_info)
                     .unwrap();
             }
-            // TODO: UNDO THIS
-            dev.device_wait_idle().expect("Wait Idle");
-            // WARNING: WE CANNOT RETURN EARLY BECAUSE OF THIS
-            println!("MID");
-            println!(
-                "dispatch after second command buffer: {:?}",
-                self.dispatch_buffer.mapped_slice(),
-            );
-            if self.dispatch_buffer.mapped_slice()[0]
-                .draw_indirect_command
-                .vertex_count
-                == 0
-            {
-                panic!("We got em");
-            }
-            println!("END");
             /*
-            println!(
-                "interior0: {:?}",
-                self.scene_buffer_handles.cbt_interior_mapped[0]
-            );
-            println!(
-                "interior1: {:?}",
-                self.scene_buffer_handles.cbt_interior_mapped[1]
-            );
-            println!(
-                "interior2: {:?}",
-                self.scene_buffer_handles.cbt_interior_mapped[3]
-            );
-            println!(
-                "interior3: {:?}",
-                self.scene_buffer_handles.cbt_interior_mapped[7]
-            );
-            println!(
-                "interior4: {:?}",
-                self.scene_buffer_handles.cbt_interior_mapped[15]
-            );
-            println!(
-                "interior5: {:?}",
-                self.scene_buffer_handles.cbt_interior_mapped[31]
-            );
-            println!(
-                "interior6: {:?}",
-                self.scene_buffer_handles.cbt_interior_mapped[63]
-            );
-            let allocation_indices = self.scene_buffer_handles.allocation_indices_mapped[0];
-            println!("allocation0: {:?}", allocation_indices,);
-            println!(
-                "leaf0: {:b}",
-                self.scene_buffer_handles.cbt_leaves_mapped[0]
-            );
-            println!(
-                "heapid0: {:b}",
-                self.scene_buffer_handles.heapid_buffer_mapped[0]
-            );
-            println!(
-                "vertices0: {:?}",
-                self.scene_buffer_handles.vertex_buffer_mapped[0]
-            );
-            if allocation_indices[0] != u32::MAX {
-                println!(
-                    "leafnext: {:b}",
-                    self.scene_buffer_handles.cbt_leaves_mapped
-                        [(allocation_indices[0] / 32) as usize]
-                );
-                let curr_heapid =
-                    self.scene_buffer_handles.heapid_buffer_mapped[allocation_indices[0] as usize];
-                println!("heapid: {:b}", curr_heapid);
-                let mut vertex_index: u32 = 0;
-                for heapid in self.scene_buffer_handles.heapid_buffer_mapped {
-                    if *heapid == curr_heapid {
-                        break;
-                    }
-                    if *heapid != 0 {
-                        vertex_index += 1;
-                    }
+            if true {
+                dev.wait_semaphores(
+                    &vk::SemaphoreWaitInfo::default()
+                        .semaphores(&[self.frame_pace_semaphore])
+                        .values(&[self.frame_index + 1]),
+                    u64::MAX,
+                )
+                .expect("Wait semaphore");
+                let gpu_cbt_root = self.scene_buffer_handles.cbt_interior.mapped_slice()[0];
+                let mut num_allocated_blocks = 0;
+
+                for leaf in self.scene_buffer_handles.cbt_leaves.mapped_slice() {
+                    num_allocated_blocks += leaf.count_ones();
                 }
-                println!("vertex_index: {:?}", vertex_index);
-                println!(
-                    "vertices: {:?}",
-                    self.scene_buffer_handles.vertex_buffer_mapped[vertex_index as usize]
+                assert_eq!(num_allocated_blocks, gpu_cbt_root);
+                assert_eq!(
+                    (1 << 17) - gpu_cbt_root,
+                    self.dispatch_buffer.mapped_slice()[0].remaining_memory_count
                 );
-            }
-            let sum: u32 = self
-                .scene_buffer_handles
-                .cbt_leaves_mapped
-                .into_iter()
-                .map(|x| x.count_ones())
-                .sum();
-            debug_assert!(sum == self.scene_buffer_handles.cbt_interior_mapped[0]); */
-
-            /*
-            println!(
-            "interior4: {:?}",
-            self.scene_buffer_handles.cbt_interior_mapped[4095]
-            );
-            println!("dispatch: {:?}", *self.dispatch_mapped);
-            println!("leaf: {:b}", self.scene_buffer_handles.cbt_leaves_mapped[0]);
-            println!(
-            "merging_buffer: {:?}, {:?}, {:?}",
-            self.scene_buffer_handles.merging_buffer_mapped[0],
-            self.scene_buffer_handles.merging_buffer_mapped[1],
-            self.scene_buffer_handles.merging_buffer_mapped[2]
-            );
-
-            for i in 0..(self.scene_buffer_handles.cbt_interior_mapped[0] + 4) {
-            let i = i as usize;
-            println!("i: {:?}", i);
-            println!(
-            "vertex: {:?}",
-            self.scene_buffer_handles.vertex_buffer_mapped[i],
-            );
-            println!(
-            "heapid: {:b}",
-            self.scene_buffer_handles.heapid_buffer_mapped[i],
-            );
-            println!(
-            "neighbors: {:?}",
-            self.scene_buffer_handles.neighbors_buffer_mapped[i],
-            );
-            println!(
-            "allocation_indices: {:?}",
-            self.scene_buffer_handles.allocation_indices_mapped[i],
-            );
-            println!(
-            "commands: {:?}",
-            self.scene_buffer_handles.bisector_command_mapped[i],
-            );
-            println!(
-            "splitting: {:?}",
-            self.scene_buffer_handles.splitting_buffer_mapped[i],
-            );
-            if (i < 6) {
-            println!(
-            "root_bisector: {:?}",
-            self.scene_buffer_handles.root_bisector_buffer_mapped[i],
-            );
-            }
-            }
-            println!("cam : {:?}", self.camera);*/
+                assert_eq!(
+                    num_allocated_blocks,
+                    self.dispatch_buffer.mapped_slice()[0].num_allocated_blocks
+                );
+            }*/
             self.frame_index += 1;
+            if self.frame_index == 18 {
+                panic!("hi");
+            }
         }
     }
 }
@@ -814,8 +693,9 @@ impl ApplicationHandler for App {
                 .buffer_device_address(true)
                 .timeline_semaphore(true)
                 .scalar_block_layout(true);
-            let mut vulkan_13_features =
-                vk::PhysicalDeviceVulkan13Features::default().dynamic_rendering(true);
+            let mut vulkan_13_features = vk::PhysicalDeviceVulkan13Features::default()
+                .dynamic_rendering(true)
+                .synchronization2(true);
             let device_create_info = vk::DeviceCreateInfo::default()
                 .queue_create_infos(std::slice::from_ref(&queue_info))
                 .enabled_extension_names(&device_extension_names_raw)
@@ -958,7 +838,6 @@ impl ApplicationHandler for App {
 
             let fence_signalled_info =
                 vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED);
-            let fence_unsignalled_info = vk::FenceCreateInfo::default();
 
             let command_reuse_fences = [
                 device.create_fence(&fence_signalled_info, None).unwrap(),
@@ -1032,24 +911,6 @@ impl ApplicationHandler for App {
             debug_assert!(algorithm_data.cbt.interior.len() == 8191);
             debug_assert!(algorithm_data.want_split_buffer.len() == (1 << 17));
             debug_assert!(algorithm_data.base_depth == 3);
-
-            let vertex_buffer: AllocatedBuffer<[Vec3; 3]> = GPUBuffer::new_with_data(
-                &device,
-                algorithm_data.vertex_buffer.as_slice(),
-                device_memory_properties,
-                vk::BufferUsageFlags::TRANSFER_DST
-                    | vk::BufferUsageFlags::STORAGE_BUFFER
-                    | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
-                vk::SharingMode::EXCLUSIVE,
-                vk::MemoryPropertyFlags::DEVICE_LOCAL,
-                setup_command_buffer,
-                setup_commands_reuse_fence,
-                present_queue,
-            );
-
-            let initial_staging_buffer: Vec<u32> = (0..algorithm_data.root_bisector_vertices.len())
-                .map(|x| x as u32)
-                .collect();
 
             // initialization command buffer
             record_submit_commandbuffer(
@@ -1332,18 +1193,70 @@ impl ApplicationHandler for App {
 
             let mem_props = device_memory_properties;
 
-            let scene_buffer_handles = SceneCPUHandles {
-                root_bisector_vertices: GPUBuffer::<[Vec3; 3]>::new_with_data(
-                    &device,
-                    algorithm_data.root_bisector_vertices.as_slice(),
-                    mem_props,
-                    vk::BufferUsageFlags::UNIFORM_BUFFER,
+            struct BufferCreationBoilerplate<'a> {
+                device: &'a ash::Device,
+                mem_props: PhysicalDeviceMemoryProperties,
+                command_buffer: vk::CommandBuffer,
+                command_buffer_reuse_fence: vk::Fence,
+                queue: vk::Queue,
+            }
+            fn allocated_buffer_from_data<'a, T: Copy>(
+                data: &[T],
+                usage: vk::BufferUsageFlags,
+                boilerplate: &'a BufferCreationBoilerplate,
+            ) -> AllocatedBuffer<T> {
+                GPUBuffer::<T>::new_with_data(
+                    boilerplate.device,
+                    data,
+                    boilerplate.mem_props,
+                    usage,
                     vk::SharingMode::EXCLUSIVE,
                     vk::MemoryPropertyFlags::DEVICE_LOCAL,
-                    setup_command_buffer,
-                    setup_commands_reuse_fence,
-                    present_queue,
-                ),
+                    boilerplate.command_buffer,
+                    boilerplate.command_buffer_reuse_fence,
+                    boilerplate.queue,
+                )
+            }
+            fn mapped_buffer_from_data<'a, T: Copy>(
+                data: &[T],
+                usage: vk::BufferUsageFlags,
+                boilerplate: &'a BufferCreationBoilerplate,
+            ) -> MappedBuffer<T> {
+                GPUBuffer::<T>::new_with_data(
+                    boilerplate.device,
+                    data,
+                    boilerplate.mem_props,
+                    usage,
+                    vk::SharingMode::EXCLUSIVE,
+                    vk::MemoryPropertyFlags::DEVICE_LOCAL,
+                    boilerplate.command_buffer,
+                    boilerplate.command_buffer_reuse_fence,
+                    boilerplate.queue,
+                )
+            }
+            let boilerplate = BufferCreationBoilerplate {
+                device: &device,
+                mem_props: mem_props,
+                command_buffer: setup_command_buffer,
+                command_buffer_reuse_fence: setup_commands_reuse_fence,
+                queue: present_queue,
+            };
+            let scene_buffer_handles = SceneCPUHandles {
+                root_bisector_vertices: allocated_buffer_from_data(
+                    algorithm_data.root_bisector_vertices.as_slice(),
+                    BufferUsageFlags::UNIFORM_BUFFER,
+                    &boilerplate,
+                ), /*GPUBuffer::<[Vec3; 3]>::new_with_data(
+                       &device,
+                       algorithm_data.root_bisector_vertices.as_slice(),
+                       mem_props,
+                       vk::BufferUsageFlags::UNIFORM_BUFFER,
+                       vk::SharingMode::EXCLUSIVE,
+                       vk::MemoryPropertyFlags::DEVICE_LOCAL,
+                       setup_command_buffer,
+                       setup_commands_reuse_fence,
+                       present_queue,
+                   )*/
 
                 cbt_interior: GPUBuffer::<u32>::new_with_data(
                     &device,
@@ -1603,11 +1516,11 @@ impl ApplicationHandler for App {
 
             self.state = Some(State {
                 window: window,
-                instance: instance,
+                // instance: instance,
                 device: device,
                 swapchain: swapchain,
                 swapchain_loader: swapchain_loader,
-                setup_command_buffer: setup_command_buffer,
+                // setup_command_buffer: setup_command_buffer,
                 draw_command_buffers: draw_command_buffers,
                 present_queue: present_queue,
                 present_image_views: present_image_views,
@@ -1622,10 +1535,8 @@ impl ApplicationHandler for App {
                 command_reuse_fences: command_reuse_fences,
                 frame_pace_semaphore: frame_pace_semaphore,
 
-                algorithm_data: algorithm_data,
-                iteration_counter: 0,
-                setup_commands_reuse_fence: setup_commands_reuse_fence,
-
+                // algorithm_data: algorithm_data,
+                // setup_commands_reuse_fence: setup_commands_reuse_fence,
                 scene_buffer: scene_buffer,
                 dispatch_buffer: dispatch_buffer,
 

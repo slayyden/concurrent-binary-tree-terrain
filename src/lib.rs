@@ -2,6 +2,7 @@
 
 use std::{
     cmp::max,
+    iter::Map,
     marker::PhantomData,
     ptr::null_mut,
     slice,
@@ -9,7 +10,7 @@ use std::{
     u32,
 };
 
-use glam::{Mat4, Vec2, Vec3, Vec4};
+use glam::{Mat4, Vec3, Vec4};
 
 use ash::{Device, vk};
 
@@ -277,7 +278,6 @@ impl<T: Copy> GPUBuffer<T> for AllocatedBuffer<T> {
                 },
             );
             device.device_wait_idle().expect("Wait idle.");
-            device.unmap_memory(staging_buffer.allocation());
             staging_buffer.destroy(device);
         }
 
@@ -885,12 +885,6 @@ pub fn get_child_edge_types(command: u32, parent_edge_type: usize) -> [u8; 2] {
     return CHILD_EDGE_TYPE_LUT[(command / 2) as usize][parent_edge_type as usize];
 }
 
-struct SplitEdge {
-    slot: u32,           // allocation slot
-    edge_type: u8,       // whether it is NEXT, PREV, or TWIN
-    neighbor_index: u32, // index of neighbor allocation slot
-}
-
 pub fn link_siblings(prev_sibling: u32, next_sibling: u32, neighbor_buffer: &mut [[u32; 3]]) {
     neighbor_buffer[prev_sibling as usize][NEXT] = next_sibling;
     neighbor_buffer[next_sibling as usize][PREV] = prev_sibling;
@@ -910,13 +904,6 @@ fn find_edge_type(curr_id: u32, neighbor_neighbors: [u32; 3]) -> usize {
         debug_assert!(neighbor_neighbors[TWIN] == curr_id);
         TWIN
     }
-}
-
-// convention: when looking at the bisector from the outside,
-// with the newest vertex (of the child) on top, splitedge x is left of splitedge y
-struct EdgeData {
-    x: SplitEdge,
-    y: SplitEdge,
 }
 
 pub fn update_pointers(
@@ -1214,8 +1201,8 @@ pub struct SceneCPUHandles {
     pub root_bisector_vertices: AllocatedBuffer<[Vec3; 3]>,
     // our concurrent binary tree
     // cbt: CBT,
-    pub cbt_interior: AllocatedBuffer<u32>,
-    pub cbt_leaves: AllocatedBuffer<u32>,
+    pub cbt_interior: MappedBuffer<u32>,
+    pub cbt_leaves: MappedBuffer<u32>,
 
     // classification stage
     // pub classification_pipeline: vk::Pipeline,
@@ -1408,17 +1395,6 @@ impl PipelineData {
 
     pub fn iterate(&mut self) {
         // DOES NOT CLASSIFY
-
-        let num_threads = self.cbt.interior[0];
-
-        /*
-        for tid in 0..num_threads {
-            let curr_id = self.cbt.one_bit_to_id(tid);
-            if self.bisector_state_buffer[curr_id as usize] == SPLIT {
-                let bisector_slot = self.want_split_buffer_count.fetch_add(1, Ordering::Relaxed);
-                self.want_split_buffer[bisector_slot as usize];
-            }
-        }*/
 
         // write split commands
         for i in 0..self.want_split_buffer_count.load(Ordering::Relaxed) {

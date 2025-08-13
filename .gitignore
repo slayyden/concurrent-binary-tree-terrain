@@ -3,3 +3,8 @@
 *.mov
 *.gputrace
 .DS_Store
+*.py
+uv.lock
+pyproject.toml
+.python-version
+debug
