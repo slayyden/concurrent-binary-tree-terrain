@@ -414,7 +414,7 @@ impl State {
                         .aspect_mask(vk::ImageAspectFlags::DEPTH)
                         .clear_value(vk::ClearValue {
                             depth_stencil: vk::ClearDepthStencilValue {
-                                depth: 1.0,
+                                depth: 0.0,
                                 stencil: 0,
                             },
                         }),
@@ -788,7 +788,7 @@ impl ApplicationHandler for App {
                 .collect();
 
             let device_memory_properties = instance.get_physical_device_memory_properties(pdevice);
-            let depth_format = vk::Format::D16_UNORM;
+            let depth_format = vk::Format::D32_SFLOAT;
             let depth_image_create_info = vk::ImageCreateInfo::default()
                 .image_type(vk::ImageType::TYPE_2D)
                 .format(depth_format)
@@ -969,7 +969,7 @@ impl ApplicationHandler for App {
                 .attachments(&color_attachment_state);
 
             let depth_stencil_state = vk::PipelineDepthStencilStateCreateInfo::default()
-                .depth_compare_op(vk::CompareOp::LESS); // TODO: REVERT
+                .depth_compare_op(vk::CompareOp::GREATER);
             let viewport_state = vk::PipelineViewportStateCreateInfo::default()
                 .viewport_count(1)
                 .scissor_count(1);
