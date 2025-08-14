@@ -5,7 +5,7 @@ use ash::{
     khr::{surface, swapchain},
     util::read_spv,
     vk::{
-        self, BufferUsageFlags, CommandBufferSubmitInfo, PhysicalDeviceMemoryProperties,
+        self, BufferUsageFlags, CommandBufferSubmitInfo, Extent2D, PhysicalDeviceMemoryProperties,
         PipelineStageFlags2, ShaderStageFlags,
     },
 };
@@ -166,8 +166,7 @@ impl State {
             );
 
             let push_constants = PushConstants {
-                view_project: Mat4::perspective_rh(PI / 2.0, 16.0 / 9.0, 0.01, 100.0)
-                    * self.camera.view_matrix(),
+                view_project: self.camera.projection_matrix() * self.camera.view_matrix(),
                 scene: self.scene_buffer.device_address(),
                 dispatch: self.dispatch_buffer.device_address(),
                 camera_position: Vec3A::from(self.camera.pos),
@@ -1527,11 +1526,17 @@ impl ApplicationHandler for App {
 
                 scene_buffer_handles,
 
-                camera: CameraState {
-                    pos: Vec3::new(0.0, 0.0, 2.0),
-                    pitch: 0.1,
-                    yaw: 0.0,
-                },
+                camera: CameraState::new(
+                    Vec3::new(0.0, 0.0, 2.0),
+                    0.1,
+                    0.0,
+                    PI / 2.0,
+                    Extent2D {
+                        width: 1920,
+                        height: 1080,
+                    },
+                    0.1,
+                ),
             })
         }
     }
@@ -1555,7 +1560,7 @@ impl ApplicationHandler for App {
                 let (dx, dy) = delta;
                 const LOOK_SENSITIVITY: f32 = 0.01;
                 state.camera.yaw -= LOOK_SENSITIVITY * dx as f32;
-                state.camera.pitch += LOOK_SENSITIVITY * dy as f32;
+                state.camera.pitch -= LOOK_SENSITIVITY * dy as f32;
 
                 let eps = 10e-3;
                 if state.camera.pitch < 0.0 + eps {

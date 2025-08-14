@@ -12,7 +12,10 @@ use std::{
 
 use glam::{Mat4, Vec3, Vec4};
 
-use ash::{Device, vk};
+use ash::{
+    Device,
+    vk::{self, Extent2D},
+};
 
 pub fn byteslice<T: Sized>(p: &T) -> &[u8] {
     unsafe {
@@ -1505,20 +1508,83 @@ pub struct CameraState {
     pub pitch: f32,
     // yaw (-pi, pi)
     pub yaw: f32,
+
+    // fov in radians
+    pub fovy: f32,
+    resolution: vk::Extent2D,
+    aspect: f32,
+
+    pub near: f32,
 }
 
 impl CameraState {
+    pub fn new(
+        pos: Vec3,
+        pitch: f32,
+        yaw: f32,
+        fovy: f32,
+        resolution: vk::Extent2D,
+        near: f32,
+    ) -> Self {
+        let aspect = (resolution.width as f32) / (resolution.height as f32);
+        Self {
+            pos: pos,
+            pitch: pitch,
+            yaw: yaw,
+            fovy: fovy,
+            resolution: resolution,
+            aspect: aspect,
+            near: near,
+        }
+    }
+    pub fn update_resolution(&mut self, resolution: Extent2D) {
+        self.resolution = resolution;
+        self.aspect = (resolution.width as f32) / (resolution.height as f32);
+    }
+    pub fn resolution(&self) -> vk::Extent2D {
+        self.resolution
+    }
+    pub fn aspect(&self) -> f32 {
+        self.aspect
+    }
     pub fn lookdir(&self) -> Vec3 {
         let down = Vec4::new(0.0, 0.0, -1.0, 1.0);
         let pitched = Mat4::from_rotation_x(self.pitch) * down;
         let yawed = Mat4::from_rotation_z(self.yaw) * pitched;
         let ret = Vec3::new(yawed.x, yawed.y, yawed.z);
-        debug_assert!((ret.length() - 1.0).abs() < 0.001);
+        debug_assert!(ret.is_normalized());
         return ret;
     }
     pub fn view_matrix(&self) -> Mat4 {
-        let dir = self.lookdir();
-        Mat4::look_to_rh(self.pos, dir, Vec3::new(0.0, 0.0, 1.0))
+        let down_global = Vec3::NEG_Z;
+        let forward = self.lookdir();
+        let side = down_global.cross(forward).normalize();
+        let down = forward.cross(side);
+
+        Mat4::from_cols(
+            Vec4::new(side.x, down.x, forward.x, 0.0),
+            Vec4::new(side.y, down.y, forward.y, 0.0),
+            Vec4::new(side.z, down.z, forward.z, 0.0),
+            Vec4::new(
+                -self.pos.dot(side),
+                -self.pos.dot(down),
+                -self.pos.dot(forward),
+                1.0,
+            ),
+        )
+    }
+
+    pub fn projection_matrix(&self) -> Mat4 {
+        let focal_length = 1.0 / f32::tan(self.fovy * 0.5);
+        let x = focal_length / self.aspect;
+        let y = focal_length;
+
+        Mat4::from_cols(
+            Vec4::new(x, 0.0, 0.0, 0.0),
+            Vec4::new(0.0, y, 0.0, 0.0),
+            Vec4::new(0.0, 0.0, 0.0, 1.0),
+            Vec4::new(0.0, 0.0, self.near, 0.0),
+        )
     }
 }
 
