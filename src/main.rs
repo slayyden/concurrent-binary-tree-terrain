@@ -958,7 +958,7 @@ impl ApplicationHandler for App {
                 .topology(vk::PrimitiveTopology::TRIANGLE_LIST);
             let rasterization_state = vk::PipelineRasterizationStateCreateInfo::default()
                 .polygon_mode(vk::PolygonMode::FILL)
-                .cull_mode(vk::CullModeFlags::NONE)
+                .cull_mode(vk::CullModeFlags::BACK)
                 .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
                 .line_width(1.0);
             // let blend_attachment_state = vk::PipelineColorBlendAttachmentState::default();
