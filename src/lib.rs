@@ -1515,8 +1515,6 @@ impl CameraState {
         let ret = Vec3::new(yawed.x, yawed.y, yawed.z);
         debug_assert!((ret.length() - 1.0).abs() < 0.001);
         return ret;
-        // return Vec3::new(0.0, 1.0, 0.0);
-        // return -self.pos;
     }
     pub fn view_matrix(&self) -> Mat4 {
         let dir = self.lookdir();

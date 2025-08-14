@@ -533,8 +533,7 @@ impl State {
                     .queue_present(self.present_queue, &present_info)
                     .unwrap();
             }
-            /*
-            if true {
+            if false {
                 dev.wait_semaphores(
                     &vk::SemaphoreWaitInfo::default()
                         .semaphores(&[self.frame_pace_semaphore])
@@ -542,25 +541,11 @@ impl State {
                     u64::MAX,
                 )
                 .expect("Wait semaphore");
-                let gpu_cbt_root = self.scene_buffer_handles.cbt_interior.mapped_slice()[0];
-                let mut num_allocated_blocks = 0;
-
-                for leaf in self.scene_buffer_handles.cbt_leaves.mapped_slice() {
-                    num_allocated_blocks += leaf.count_ones();
-                }
-                assert_eq!(num_allocated_blocks, gpu_cbt_root);
-                assert_eq!(
-                    (1 << 17) - gpu_cbt_root,
-                    self.dispatch_buffer.mapped_slice()[0].remaining_memory_count
-                );
-                assert_eq!(
-                    num_allocated_blocks,
-                    self.dispatch_buffer.mapped_slice()[0].num_allocated_blocks
-                );
-            }*/
+                // println!("Camera Position: {:?}", self.camera.pos);
+            }
             self.frame_index += 1;
             if self.frame_index == 18 {
-                panic!("hi");
+                // panic!("hi");
             }
         }
     }
@@ -1578,6 +1563,7 @@ impl ApplicationHandler for App {
                 } else if state.camera.pitch > PI - eps {
                     state.camera.pitch = PI - eps;
                 }
+                println!("Pitch: {:?}", state.camera.pitch);
             }
             _ => (),
         }
@@ -1614,12 +1600,22 @@ impl ApplicationHandler for App {
             } => match key.as_ref() {
                 Key::Character("w") => {
                     state.camera.pos += state.camera.lookdir() * 0.3;
+                    println!("Camera Position: {:?}", state.camera.pos);
                 }
-                Key::Character("a") => {}
+                Key::Character("a") => {
+                    let left = Vec3::Z.cross(state.camera.lookdir()).normalize();
+                    state.camera.pos += left * 0.3;
+                    println!("Camera Position: {:?}", state.camera.pos);
+                }
                 Key::Character("s") => {
                     state.camera.pos += state.camera.lookdir() * -0.3;
+                    println!("Camera Position: {:?}", state.camera.pos);
                 }
-                Key::Character("d") => {}
+                Key::Character("d") => {
+                    let right = -Vec3::Z.cross(state.camera.lookdir()).normalize();
+                    state.camera.pos += right * 0.3;
+                    println!("Camera Position: {:?}", state.camera.pos);
+                }
                 _ => (),
             },
             _ => (),
