@@ -11,7 +11,7 @@ struct SceneData
     TriState *bisector_state_buffer;
 
     // prepare split
-    uint *bisector_split_command_buffer;
+    Atomic<uint> *bisector_split_command_buffer;
     uint3 *neighbors_buffer;
     uint *splitting_buffer;
     uint *heapid_buffer;
@@ -30,12 +30,12 @@ struct SceneData
 
     // draw
     float3 *vertex_buffer;
+    uint *curr_id_buffer;
 
     // integers
     uint num_memory_blocks;
     uint base_depth;
     uint cbt_depth;
-    uint debug_counter;
 }
 // 116 bytes
 struct DrawIndirectCommand
@@ -51,6 +51,18 @@ struct DispatchIndirectCommand
     uint x;
     uint y;
     uint z;
+}
+
+struct DebugData
+{
+    Atomic<uint> curr_heapid;
+    uint curr_id;
+    uint neighbor_heapid;
+    uint neighbor_id;
+    float3 curr_verts[3];
+    float3 neighbor_verts[3];
+    uint num_equal;
+    int2 equal_indices[2];
 }
 
 struct DispatchData
@@ -72,7 +84,7 @@ struct DispatchData
     Atomic<uint> merging_bisector_count;
     // written at reduce
     uint num_allocated_blocks;
-    uint debug_counter;
+    DebugData debug_data;
 }
 
 struct PushConstant
@@ -80,6 +92,7 @@ struct PushConstant
     float4x4 view_project;
     SceneData *scene;
     DispatchData *dispatch;
+    float3 *vertex_buffer;
     float3 cam_pos;
     float3 lookdir;
 }
@@ -121,6 +134,14 @@ ConstantBuffer<PushConstant> pc;
 
 uint heap_id_depth(uint heapid)
 {
+    /*
+    uint depth = 0;
+    while (heapid > 0u)
+    {
+        ++depth;
+        heapid >>= 1u;
+    }
+    return depth - 1;*/
     return firstbithigh(heapid);
 }
 
@@ -132,7 +153,13 @@ uint find_edge_type(uint curr_id, uint3 neighbor_neighbors)
     else if (neighbor_neighbors[PREV] == curr_id)
         return PREV;
     else
+    {
+        if (neighbor_neighbors[TWIN] != curr_id)
+        {
+            pc.dispatch.debug_data.curr_heapid.compareExchange(0, curr_id);
+        }
         return TWIN;
+    }
 }
 
 uint div_ceil(uint x, uint divisor)

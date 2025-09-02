@@ -366,4 +366,161 @@ how about leaves:
 leaves are consistent
 
 # Session 5
-allocation_indices fails with tid 43584
+atomic loads are inconsistent between runs of the debugger
+binary view is BACKWARDS
+heapid buffer: 0x13082a660
+also heapid buffer: 0x1308339c0
+- THEY'RE FUCKING ALIASED FMLLLLL
+cbt_leaves buffer: 0x13090d4e0
+
+want split buffer: 0x
+Frame k-4 (Present 3764)
+  Geometry is fine
+    Tri A is 30
+    Tri B is 65
+  Draw call:
+    heapid[43] = 0b100110 = 38
+      - 38 % 8 != 0 => will not be selected to split next time
+Frame k-3 (Present 4174)
+  2 Nontriangular faces in geometry
+    Verts: 87, 88, 89, 189, 190, 191
+    Tris: 29 (A), 63 (B)
+      Tri A should have been split by Tri 56 (from last geo)
+      Tri B should have been split by Tri 69 (from last geo)
+
+  Classify:
+    heapid[56] = INVALID_INDEX
+    heapid[69] = 0b100010111 = 279
+    leaves[56] = 0
+  Vertex Compute
+    Thread 29:
+      curr_id = 43
+      heapid[43] = 0b100110 = 38
+        this heapid reflects the geometry
+        so why are the heapids wrong??
+    Thread 63:
+
+Frame k-2 (Present 4584)
+  Hole in geometry after draw call
+  Attachment looks fine??
+Frame k-1 (Present 4994)
+non triangular grid
+
+Frame n-1 (Present ??):
+  Draw call: 392802 verts
+    Dispatch:
+      Draw call: 392802 verts
+      Dispatch Split: 200
+      Dispatch Allocate: 1
+      Dispatch Vertex Compute: 2046
+      Remaining Memory: 138
+      Allocation Counter: 17
+      Want Split Buffer Count: 12739
+      Splitting Buffer Count: 7
+      Want Merge Buffer Count: 0
+      Merging Bisector Count: 0
+      Num Allocated Blocks:  130934
+Frame n (Present 25084):
+Vertex Compute:
+  Dispatch:
+    Draw call: 392919 verts
+    Dispatch Split: 200
+    Dispatch Allocate: 2
+    Dispatch Vertex Compute: 2047
+    Remaining Memory: 80
+    Allocation Counter: 30
+    Want Split Buffer Count: 12734
+    Splitting Buffer Count: 99
+    Want Merge Buffer Count: 0
+    Merging Bisector Count: 0
+    Num Allocated Blocks:  130973
+Draw call:
+  Push constants:
+  Dispatch:
+    Draw call: 392976 verts
+    Dispatch Split: 199
+    Dispatch Allocate: 1
+    Dispatch Vertex Compute: 2047
+    Remaining Memory: 80
+    Allocation Counter: 30
+    Want Split Buffer Count: 12734
+    Splitting Buffer Count: 11
+    Want Merge Buffer Count: 0
+    Merging Bisector Count: 0
+    Num Allocated Blocks 130992
+
+
+
+  Draw call: 392976 verts
+  Vertex buffer: 0x130910660
+  Observations:
+  - Vertices 392937 to 392975 are part of triangles that share a vertex with a hole
+  - 39 Vertices or 13 triangles
+
+lots of holes is not from not using allocated children
+holes are consistent between frames
+
+```c++
+inline T spvFindUMSB(T x)
+{
+    return select(clz(T(0)) - (clz(x) + T(1)), T(-1), x == T(0));
+}
+
+inline uint spvFindUMSB(uint x)
+{
+    return select(clz(0) - (clz(x) + 1), UINT_MAX, x == T(0));
+}
+
+inline uint spvFindUMSB(uint x)
+{
+    return select(32 - clz(x) + 1, UINT_MAX, x == T(0));
+}
+```
+- this is a dead end. seems like a bug related to writing to a uniform buffer
+
+
+# Session 6
+heapid buffer: 0x147e545a0
+Vertex Compute 4635
+- Thread 43
+  - Split code: 6 = 00110
+  - Verts: [0, 66.66, 0], [-12.5, 54.1, 0], [0, 50, 0]
+
+
+Present 4750
+- all good
+- Triangle ID 68 is present w/ vtxes 129, 130, 131
+  - vid/3 = 129/3 = 43
+  - vertex_buffer[129] = [75, 25, 0]
+  - vertex_buffer[130] = [16, 0, -25]
+  - vertex_buffer[131] = [0, -12.5, -70.8] WHAT THE FUCK IS THISSS
+
+Classify 4788
+- Thread 43
+  - curr_id is 68
+- heap_id_buffer[68] = 1_000_0000110
+  - should be 1_100_0010
+  - wait now it's 1_010_00110
+
+Present 5173
+- missing triangles
+- nontrianglular faces
+- previous triangle id 68 is absent
+
+
+Okay let's think through this.
+Symptoms:
+- SOMETIMES, black triangles appear in the RENDERED VIEW AFTER we are at SUBDIVISION EQUILIBRIUM
+- EVERY TIME, nontriangular faces and black triangles appear in the DEBUG VIEW AFTER ~12 levels of subdivision
+- triangle vertices represent heapid buffer
+- longer time between frames reduces the chance of the bug appearing?
+  - seems to still happen when manually stepping through
+- bug increases in likelihood when all bisectors wants to split at once
+- from our validation, it seems that all faces are triangular
+  - furthermore, these neighbors must either exist in the vertex buffer or be invalid
+  - increasing vertex draw count does not seem to solve anything
+  - therefore, the neighbors are probably invalid
+    - let's check using the fragment shader
+    - the neighbors are INVALID
+How many iterations?
+- 30, 19, 30, 34, 20, 26, 34, 29

@@ -2,6 +2,8 @@ SLANGC=$VULKAN_SDK/bin/slangc
 FLAGS="-fvk-use-scalar-layout -matrix-layout-row-major -target spirv"
 
 $SLANGC src/shader/test.slang $FLAGS -entry vertexMain -o src/shader/vert.spv
+$SLANGC src/shader/test.slang $FLAGS -entry fragmentMain -o src/shader/frag.spv
+$SLANGC src/shader/test.slang $FLAGS -entry fragmentWire -o src/shader/wirefrag.spv
 $SLANGC src/shader/classify.slang $FLAGS -entry classify -o src/shader/classify.spv
 $SLANGC src/shader/allocate.slang $FLAGS -entry allocate -o src/shader/allocate.spv
 $SLANGC src/shader/cbt_reduce.slang $FLAGS -entry reduce -o src/shader/reduce.spv
@@ -15,3 +17,4 @@ $SLANGC src/shader/dispatch_allocate.slang $FLAGS -entry dispatch_allocate -o sr
 $SLANGC src/shader/dispatch_prepare_merge.slang $FLAGS -entry dispatch_prepare_merge -o src/shader/dispatch_prepare_merge.spv
 $SLANGC src/shader/dispatch_split.slang $FLAGS -entry dispatch_split -o src/shader/dispatch_split.spv
 $SLANGC src/shader/vertex_compute.slang $FLAGS -entry vertex_compute -o src/shader/vertex_compute.spv
+$SLANGC src/shader/validate.slang $FLAGS -entry validate -o src/shader/validate.spv

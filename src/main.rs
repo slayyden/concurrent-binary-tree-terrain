@@ -11,9 +11,10 @@ use ash::{
 };
 use dirt_jam::*;
 use glam::{Mat4, Vec3, Vec3A};
-use std::f32::consts::PI;
-use std::{cmp::max, error::Error, ffi::CStr, io::Cursor, os::raw::c_char, u64};
-use std::{mem::offset_of, sync::atomic::Ordering};
+use std::{
+    cmp::max, error::Error, f32::consts::PI, ffi::CStr, io::Cursor, mem::offset_of, num,
+    os::raw::c_char, sync::atomic::Ordering, thread, time, u64,
+};
 use winit::{
     application::ApplicationHandler,
     event::{DeviceEvent, ElementState, KeyEvent, WindowEvent},
@@ -30,6 +31,7 @@ struct PushConstants {
 
     scene: vk::DeviceAddress,
     dispatch: vk::DeviceAddress,
+    vertex_buffer: vk::DeviceAddress,
 
     camera_position: Vec3A,
     lookdir: Vec3A,
@@ -45,11 +47,12 @@ struct State {
     draw_command_buffers: [vk::CommandBuffer; 3],
     present_queue: vk::Queue,
     pipeline: vk::Pipeline,
+    wire_pipeline: vk::Pipeline,
     pipeline_layout: vk::PipelineLayout,
     // the we can get any number of images above the minimum, length is unknown at comptime
     present_image_views: Vec<vk::ImageView>,
     present_images: Vec<vk::Image>,
-    depth_image_view: vk::ImageView,
+    depth_image_views: Vec<vk::ImageView>,
     swapchain: vk::SwapchainKHR,
     swapchain_loader: swapchain::Device,
 
@@ -64,8 +67,13 @@ struct State {
     scene_buffer_handles: SceneCPUHandles,
     scene_buffer: MappedBuffer<SceneDataGPU>,
     dispatch_buffer: MappedBuffer<DispatchDataGPU>,
+    dispatch_buffer_swapback: MappedBuffer<DispatchDataGPU>,
 
     camera: CameraState,
+    algorithm_data: PipelineData,
+    divide: bool,
+    num_iters: u32,
+    swapback: bool,
 }
 
 impl State {
@@ -111,14 +119,14 @@ impl State {
             let color_attachments = [vk::RenderingAttachmentInfo::default()
                 .clear_value(vk::ClearValue {
                     color: vk::ClearColorValue {
-                        float32: [0.0, 0.0, 0.0, 1.0] as [f32; 4],
+                        float32: [1.0, 0.0, 0.0, 1.0] as [f32; 4],
                     },
                 })
                 .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
                 .image_view(self.present_image_views[present_index as usize])];
 
             let depth_attachment = vk::RenderingAttachmentInfo::default()
-                .image_view(self.depth_image_view)
+                .image_view(self.depth_image_views[present_index as usize])
                 .image_layout(vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL)
                 .clear_value(vk::ClearValue {
                     depth_stencil: vk::ClearDepthStencilValue {
@@ -165,14 +173,19 @@ impl State {
                 &[pre_barrier],
             );
 
+            let vertex_buffer = if !self.swapback {
+                self.scene_buffer_handles.vertex_buffer
+            } else {
+                self.scene_buffer_handles.vertex_buffer_swapback
+            };
             let push_constants = PushConstants {
                 view_project: self.camera.projection_matrix() * self.camera.view_matrix(),
                 scene: self.scene_buffer.device_address(),
                 dispatch: self.dispatch_buffer.device_address(),
                 camera_position: Vec3A::from(self.camera.pos),
                 lookdir: Vec3A::from(self.camera.lookdir()),
+                vertex_buffer: vertex_buffer.device_address(),
             };
-            // println!("Push Constants: {:?}", push_constants);
 
             // push constants
             dev.cmd_push_constants(
@@ -248,151 +261,162 @@ impl State {
             };
             // compute_write_compute_read_memory_barrier();
 
-            // COMPUTE
-            // classify
-            {
+            if self.divide {
+                let region = vk::BufferCopy::default()
+                    .size(self.scene_buffer_handles.vertex_buffer.size_in_bytes());
+                dev.cmd_copy_buffer(
+                    *cmdbuf,
+                    self.scene_buffer_handles.vertex_buffer.buffer(),
+                    self.scene_buffer_handles.vertex_buffer_swapback.buffer(),
+                    &[region],
+                );
+                // COMPUTE
+                // classify
+                {
+                    dev.cmd_bind_pipeline(
+                        *cmdbuf,
+                        vk::PipelineBindPoint::COMPUTE,
+                        self.scene_buffer_handles.classify_pipeline,
+                    );
+
+                    dev.cmd_dispatch_indirect(
+                        *cmdbuf,
+                        self.dispatch_buffer.buffer(),
+                        offset_of!(DispatchDataGPU, dispatch_vertex_compute_command) as u64,
+                    );
+                }
+                // compute to compute barrier
+                compute_write_compute_read_memory_barrier();
+
+                // set up indirect buffer for splitting
+                {
+                    dev.cmd_bind_pipeline(
+                        *cmdbuf,
+                        vk::PipelineBindPoint::COMPUTE,
+                        self.scene_buffer_handles.dispatch_split_pipeline,
+                    );
+                    dev.cmd_dispatch(*cmdbuf, 1, 1, 1);
+                }
+
+                // compute write -> indirect buffer read
+                compute_write_indirect_read_barrier();
+                // splitting
+                {
+                    dev.cmd_bind_pipeline(
+                        *cmdbuf,
+                        vk::PipelineBindPoint::COMPUTE,
+                        self.scene_buffer_handles.split_element_pipeline,
+                    );
+                    dev.cmd_dispatch_indirect(
+                        *cmdbuf,
+                        self.dispatch_buffer.buffer(),
+                        offset_of!(DispatchDataGPU, dispatch_split_command) as u64,
+                    );
+                }
+                compute_write_compute_read_memory_barrier();
+
+                // set up indirect dispatch for allocation
+                {
+                    dev.cmd_bind_pipeline(
+                        *cmdbuf,
+                        vk::PipelineBindPoint::COMPUTE,
+                        self.scene_buffer_handles.dispatch_allocate_pipeline,
+                    );
+                    dev.cmd_dispatch(*cmdbuf, 1, 1, 1);
+                }
+                compute_write_indirect_read_barrier();
+
+                // allocate
+
                 dev.cmd_bind_pipeline(
                     *cmdbuf,
                     vk::PipelineBindPoint::COMPUTE,
-                    self.scene_buffer_handles.classify_pipeline,
+                    self.scene_buffer_handles.allocate_pipeline,
                 );
+                dev.cmd_dispatch_indirect(
+                    *cmdbuf,
+                    self.dispatch_buffer.buffer(),
+                    offset_of!(DispatchDataGPU, dispatch_allocate_command) as u64,
+                );
+                compute_write_compute_read_memory_barrier();
 
+                // compute -> compute global memory barrier
+                // update pointers
+                dev.cmd_bind_pipeline(
+                    *cmdbuf,
+                    vk::PipelineBindPoint::COMPUTE,
+                    self.scene_buffer_handles.update_pointers_pipeline,
+                );
+                dev.cmd_dispatch_indirect(
+                    *cmdbuf,
+                    self.dispatch_buffer.buffer(),
+                    offset_of!(DispatchDataGPU, dispatch_allocate_command) as u64,
+                );
+                compute_write_compute_read_memory_barrier();
+
+                // compute -> compute global memory barrier
+                // set up indirect dispatch for merging
+                dev.cmd_bind_pipeline(
+                    *cmdbuf,
+                    vk::PipelineBindPoint::COMPUTE,
+                    self.scene_buffer_handles.dispatch_prepare_merge_pipeline,
+                );
+                dev.cmd_dispatch(*cmdbuf, 1, 1, 1);
+                compute_write_indirect_read_barrier();
+
+                // prepare merge
+                dev.cmd_bind_pipeline(
+                    *cmdbuf,
+                    vk::PipelineBindPoint::COMPUTE,
+                    self.scene_buffer_handles.prepare_merge_pipeline,
+                );
+                dev.cmd_dispatch_indirect(
+                    *cmdbuf,
+                    self.dispatch_buffer.buffer(),
+                    offset_of!(DispatchDataGPU, dispatch_prepare_merge_command) as u64,
+                );
+                compute_write_compute_read_memory_barrier();
+
+                // compute -> compute global memory barrier
+                // merge
+                dev.cmd_bind_pipeline(
+                    *cmdbuf,
+                    vk::PipelineBindPoint::COMPUTE,
+                    self.scene_buffer_handles.merge_pipeline,
+                );
+                dev.cmd_dispatch_indirect(
+                    *cmdbuf,
+                    self.dispatch_buffer.buffer(),
+                    offset_of!(DispatchDataGPU, dispatch_prepare_merge_command) as u64,
+                );
+                compute_write_compute_read_memory_barrier();
+                // compute -> compute global memory barrier
+                // reduce
+                dev.cmd_bind_pipeline(
+                    *cmdbuf,
+                    vk::PipelineBindPoint::COMPUTE,
+                    self.scene_buffer_handles.reduce_pipeline,
+                );
+                dev.cmd_dispatch(*cmdbuf, 1, 1, 1);
+
+                // compute -> compute global memory barrier AND indirect read
+                compute_write_compute_read_memory_barrier();
+
+                // vertex compute
+                dev.cmd_bind_pipeline(
+                    *cmdbuf,
+                    vk::PipelineBindPoint::COMPUTE,
+                    self.scene_buffer_handles.vertex_compute_pipeline,
+                );
                 dev.cmd_dispatch_indirect(
                     *cmdbuf,
                     self.dispatch_buffer.buffer(),
                     offset_of!(DispatchDataGPU, dispatch_vertex_compute_command) as u64,
                 );
+                // compute -> graphics global memory barrier AND indirect read
+                compute_write_graphics_read_memory_barrier();
+                compute_write_compute_read_memory_barrier();
             }
-            // compute to compute barrier
-            compute_write_compute_read_memory_barrier();
-
-            // set up indirect buffer for splitting
-            {
-                dev.cmd_bind_pipeline(
-                    *cmdbuf,
-                    vk::PipelineBindPoint::COMPUTE,
-                    self.scene_buffer_handles.dispatch_split_pipeline,
-                );
-                dev.cmd_dispatch(*cmdbuf, 1, 1, 1);
-            }
-
-            // compute write -> indirect buffer read
-            compute_write_indirect_read_barrier();
-            // splitting
-            {
-                dev.cmd_bind_pipeline(
-                    *cmdbuf,
-                    vk::PipelineBindPoint::COMPUTE,
-                    self.scene_buffer_handles.split_element_pipeline,
-                );
-                dev.cmd_dispatch_indirect(
-                    *cmdbuf,
-                    self.dispatch_buffer.buffer(),
-                    offset_of!(DispatchDataGPU, dispatch_split_command) as u64,
-                );
-            }
-            compute_write_compute_read_memory_barrier();
-
-            // set up indirect dispatch for allocation
-            {
-                dev.cmd_bind_pipeline(
-                    *cmdbuf,
-                    vk::PipelineBindPoint::COMPUTE,
-                    self.scene_buffer_handles.dispatch_allocate_pipeline,
-                );
-                dev.cmd_dispatch(*cmdbuf, 1, 1, 1);
-            }
-            compute_write_indirect_read_barrier();
-
-            // allocate
-
-            dev.cmd_bind_pipeline(
-                *cmdbuf,
-                vk::PipelineBindPoint::COMPUTE,
-                self.scene_buffer_handles.allocate_pipeline,
-            );
-            dev.cmd_dispatch_indirect(
-                *cmdbuf,
-                self.dispatch_buffer.buffer(),
-                offset_of!(DispatchDataGPU, dispatch_allocate_command) as u64,
-            );
-            compute_write_compute_read_memory_barrier();
-
-            // compute -> compute global memory barrier
-            // update pointers
-            dev.cmd_bind_pipeline(
-                *cmdbuf,
-                vk::PipelineBindPoint::COMPUTE,
-                self.scene_buffer_handles.update_pointers_pipeline,
-            );
-            dev.cmd_dispatch_indirect(
-                *cmdbuf,
-                self.dispatch_buffer.buffer(),
-                offset_of!(DispatchDataGPU, dispatch_allocate_command) as u64,
-            );
-            compute_write_compute_read_memory_barrier();
-
-            // compute -> compute global memory barrier
-            // set up indirect dispatch for merging
-            dev.cmd_bind_pipeline(
-                *cmdbuf,
-                vk::PipelineBindPoint::COMPUTE,
-                self.scene_buffer_handles.dispatch_prepare_merge_pipeline,
-            );
-            dev.cmd_dispatch(*cmdbuf, 1, 1, 1);
-            compute_write_indirect_read_barrier();
-
-            // prepare merge
-            dev.cmd_bind_pipeline(
-                *cmdbuf,
-                vk::PipelineBindPoint::COMPUTE,
-                self.scene_buffer_handles.prepare_merge_pipeline,
-            );
-            dev.cmd_dispatch_indirect(
-                *cmdbuf,
-                self.dispatch_buffer.buffer(),
-                offset_of!(DispatchDataGPU, dispatch_prepare_merge_command) as u64,
-            );
-            compute_write_compute_read_memory_barrier();
-
-            // compute -> compute global memory barrier
-            // merge
-            dev.cmd_bind_pipeline(
-                *cmdbuf,
-                vk::PipelineBindPoint::COMPUTE,
-                self.scene_buffer_handles.merge_pipeline,
-            );
-            dev.cmd_dispatch_indirect(
-                *cmdbuf,
-                self.dispatch_buffer.buffer(),
-                offset_of!(DispatchDataGPU, dispatch_prepare_merge_command) as u64,
-            );
-            compute_write_compute_read_memory_barrier();
-            // compute -> compute global memory barrier
-            // reduce
-            dev.cmd_bind_pipeline(
-                *cmdbuf,
-                vk::PipelineBindPoint::COMPUTE,
-                self.scene_buffer_handles.reduce_pipeline,
-            );
-            dev.cmd_dispatch(*cmdbuf, 1, 1, 1);
-
-            // compute -> compute global memory barrier AND indirect read
-            compute_write_compute_read_memory_barrier();
-
-            // vertex compute
-            dev.cmd_bind_pipeline(
-                *cmdbuf,
-                vk::PipelineBindPoint::COMPUTE,
-                self.scene_buffer_handles.vertex_compute_pipeline,
-            );
-            dev.cmd_dispatch_indirect(
-                *cmdbuf,
-                self.dispatch_buffer.buffer(),
-                offset_of!(DispatchDataGPU, dispatch_vertex_compute_command) as u64,
-            );
-            // compute -> graphics global memory barrier AND indirect read
-            compute_write_graphics_read_memory_barrier();
             dev.cmd_begin_rendering(*cmdbuf, &rendering_info);
 
             // RENDERING CORE
@@ -406,7 +430,7 @@ impl State {
                         .aspect_mask(vk::ImageAspectFlags::COLOR)
                         .clear_value(vk::ClearValue {
                             color: vk::ClearColorValue {
-                                float32: [0.0, 0.0, 0.0, 1.0],
+                                float32: [1.0, 0.0, 0.0, 1.0],
                             },
                         }),
                     vk::ClearAttachment::default()
@@ -438,19 +462,42 @@ impl State {
                 1,
                 0,
             );
+            // draw the wireframe
+            dev.cmd_bind_pipeline(*cmdbuf, vk::PipelineBindPoint::GRAPHICS, self.wire_pipeline);
+            dev.cmd_draw_indirect(
+                *cmdbuf,
+                self.dispatch_buffer.buffer(),
+                offset_of!(DispatchDataGPU, draw_indirect_command) as u64,
+                1,
+                0,
+            );
 
             dev.cmd_end_rendering(*cmdbuf);
 
-            // no barrier needed
-            compute_write_compute_read_memory_barrier();
-            // reset
-            dev.cmd_bind_pipeline(
-                *cmdbuf,
-                vk::PipelineBindPoint::COMPUTE,
-                self.scene_buffer_handles.reset_pipeline,
-            );
-            dev.cmd_dispatch(*cmdbuf, 1, 1, 1);
+            if self.divide {
+                self.num_iters += 1;
+                println!("num_iters: {:?}", self.num_iters);
 
+                dev.cmd_bind_pipeline(
+                    *cmdbuf,
+                    vk::PipelineBindPoint::COMPUTE,
+                    self.scene_buffer_handles.validate_pipeline,
+                );
+                dev.cmd_dispatch_indirect(
+                    *cmdbuf,
+                    self.dispatch_buffer.buffer(),
+                    offset_of!(DispatchDataGPU, dispatch_vertex_compute_command) as u64,
+                );
+                compute_write_compute_read_memory_barrier();
+                // no barrier needed
+                // reset
+                dev.cmd_bind_pipeline(
+                    *cmdbuf,
+                    vk::PipelineBindPoint::COMPUTE,
+                    self.scene_buffer_handles.reset_pipeline,
+                );
+                dev.cmd_dispatch(*cmdbuf, 1, 1, 1);
+            }
             // transitioning out
             let post_barrier = vk::ImageMemoryBarrier::default()
                 .image(self.present_images[present_index as usize])
@@ -519,7 +566,6 @@ impl State {
                 )
                 .expect("Queue Submit");
             }
-            dev.queue_wait_idle(self.present_queue).expect("wait idle");
             {
                 let wait_semaphores = [self.render_complete_semaphore[semaphore_index]];
                 let swapchain = [self.swapchain];
@@ -532,20 +578,67 @@ impl State {
                     .queue_present(self.present_queue, &present_info)
                     .unwrap();
             }
-            if false {
-                dev.wait_semaphores(
-                    &vk::SemaphoreWaitInfo::default()
-                        .semaphores(&[self.frame_pace_semaphore])
-                        .values(&[self.frame_index + 1]),
-                    u64::MAX,
-                )
-                .expect("Wait semaphore");
-                // println!("Camera Position: {:?}", self.camera.pos);
+            if true {
+                if true {
+                    dev.wait_semaphores(
+                        &vk::SemaphoreWaitInfo::default()
+                            .semaphores(&[self.frame_pace_semaphore])
+                            .values(&[self.frame_index + 1]),
+                        u64::MAX,
+                    )
+                    .expect("Wait semaphore");
+                } else {
+                    dev.device_wait_idle().expect("wait idle")
+                }
+
+                // let sleep_time = time::Duration::from_millis(30);
+                // thread::sleep(sleep_time);
+                // let scene = self.scene_buffer.mapped_slice()[0];
+                let dispatch = self.dispatch_buffer.mapped_slice()[0];
+                let curr_id = dispatch.debug_data.curr_id;
+
+                if curr_id != 0 {
+                    println!("Debug Data: {:?}", dispatch.debug_data);
+                    panic!("AHA");
+                }
+                /*
+                // let dispatch = self.dispatch_buffer.mapped_slice()[0];
+                // println!("Dispatch: {:?}", dispatch);
+                let num_bisectors =
+                    self.dispatch_buffer.mapped_slice()[0].num_allocated_blocks as usize;
+                assert_eq!(
+                    num_bisectors as u32 * 3,
+                    self.dispatch_buffer.mapped_slice()[0]
+                        .draw_indirect_command
+                        .vertex_count
+                );
+
+                let mut vertex_buffer_idx: usize = 0;
+                for i in 0..(1 << 17) {
+                    let heapid = self.scene_buffer_handles.heapid_buffer.mapped_slice()[i];
+                    if heapid == 0 || !heapid == 0 {
+                        continue;
+                    }
+                    let verts =
+                        self.scene_buffer_handles.vertex_buffer.mapped_slice()[vertex_buffer_idx];
+                    let computed_verts = heapid_to_vertices(
+                        heapid,
+                        self.algorithm_data.base_depth,
+                        &self.algorithm_data.root_bisector_vertices,
+                    );
+                    let diff = (verts[0] - computed_verts[0]).length()
+                        + (verts[1] - computed_verts[1]).length()
+                        + (verts[2] - computed_verts[2]).length();
+                    debug_assert!(diff < 0.001);
+                    vertex_buffer_idx += 1;
+                }*/
+                /*
+                let last_vertex = self.scene_buffer_handles.vertex_buffer.mapped_slice()
+                    [num_bisectors as usize - 1];
+                println!("Last vertex: {:?}", last_vertex); */
             }
             self.frame_index += 1;
-            if self.frame_index == 18 {
-                // panic!("hi");
-            }
+            self.divide = false;
         }
     }
 }
@@ -671,6 +764,8 @@ impl ApplicationHandler for App {
             let queue_info = vk::DeviceQueueCreateInfo::default()
                 .queue_family_index(queue_family_index)
                 .queue_priorities(&priorities);
+            let mut vulkan_10_features =
+                vk::PhysicalDeviceFeatures::default().fill_mode_non_solid(true);
             let mut vulkan_11_features =
                 vk::PhysicalDeviceVulkan11Features::default().shader_draw_parameters(true);
             let mut vulkan_12_features = vk::PhysicalDeviceVulkan12Features::default()
@@ -683,6 +778,7 @@ impl ApplicationHandler for App {
             let device_create_info = vk::DeviceCreateInfo::default()
                 .queue_create_infos(std::slice::from_ref(&queue_info))
                 .enabled_extension_names(&device_extension_names_raw)
+                .enabled_features(&mut vulkan_10_features)
                 .push_next(&mut vulkan_11_features)
                 .push_next(&mut vulkan_12_features)
                 .push_next(&mut vulkan_13_features);
@@ -799,8 +895,12 @@ impl ApplicationHandler for App {
                 .usage(vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT)
                 .sharing_mode(vk::SharingMode::EXCLUSIVE);
 
-            let depth_image = device.create_image(&depth_image_create_info, None).unwrap();
-            let depth_image_memory_req = device.get_image_memory_requirements(depth_image);
+            let depth_images: Vec<vk::Image> = present_images
+                .iter()
+                .map(|_| device.create_image(&depth_image_create_info, None).unwrap())
+                .collect();
+
+            let depth_image_memory_req = device.get_image_memory_requirements(depth_images[0]);
             let depth_image_memory_index = find_memorytype_index(
                 &depth_image_memory_req,
                 &device_memory_properties,
@@ -812,13 +912,14 @@ impl ApplicationHandler for App {
                 .allocation_size(depth_image_memory_req.size)
                 .memory_type_index(depth_image_memory_index);
 
-            let depth_image_memory = device
-                .allocate_memory(&depth_image_allocate_info, None)
-                .unwrap();
-
-            device
-                .bind_image_memory(depth_image, depth_image_memory, 0)
-                .expect("Unable to bind depth image memory.");
+            for depth_image in depth_images.iter() {
+                let depth_image_memory = device
+                    .allocate_memory(&depth_image_allocate_info, None)
+                    .unwrap();
+                device
+                    .bind_image_memory(*depth_image, depth_image_memory, 0)
+                    .expect("Unable to bind depth image memory.");
+            }
 
             let fence_signalled_info =
                 vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED);
@@ -906,20 +1007,25 @@ impl ApplicationHandler for App {
                 &[],
                 &[],
                 |device, setup_command_buffer| {
-                    let layout_transition_barriers = vk::ImageMemoryBarrier::default()
-                        .image(depth_image)
-                        .dst_access_mask(
-                            vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ
-                                | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
-                        )
-                        .new_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
-                        .old_layout(vk::ImageLayout::UNDEFINED)
-                        .subresource_range(
-                            vk::ImageSubresourceRange::default()
-                                .aspect_mask(vk::ImageAspectFlags::DEPTH)
-                                .layer_count(1)
-                                .level_count(1),
-                        );
+                    let layout_transition_barriers: Vec<vk::ImageMemoryBarrier> = depth_images
+                        .iter()
+                        .map(|depth_image| {
+                            vk::ImageMemoryBarrier::default()
+                                .image(*depth_image)
+                                .dst_access_mask(
+                                    vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ
+                                        | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                                )
+                                .new_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+                                .old_layout(vk::ImageLayout::UNDEFINED)
+                                .subresource_range(
+                                    vk::ImageSubresourceRange::default()
+                                        .aspect_mask(vk::ImageAspectFlags::DEPTH)
+                                        .layer_count(1)
+                                        .level_count(1),
+                                )
+                        })
+                        .collect();
 
                     device.cmd_pipeline_barrier(
                         setup_command_buffer,
@@ -928,7 +1034,7 @@ impl ApplicationHandler for App {
                         vk::DependencyFlags::empty(),
                         &[],
                         &[],
-                        &[layout_transition_barriers],
+                        layout_transition_barriers.as_slice(),
                     );
                 },
             );
@@ -936,20 +1042,24 @@ impl ApplicationHandler for App {
             device.device_wait_idle().expect("Wait idle.");
             // vertex_staging_buffer.destroy(&device);
 
-            let depth_image_view_info = vk::ImageViewCreateInfo::default()
-                .subresource_range(
-                    vk::ImageSubresourceRange::default()
-                        .aspect_mask(vk::ImageAspectFlags::DEPTH)
-                        .level_count(1)
-                        .layer_count(1),
-                )
-                .view_type(vk::ImageViewType::TYPE_2D)
-                .format(depth_format)
-                .image(depth_image);
-
-            let depth_image_view = device
-                .create_image_view(&depth_image_view_info, None)
-                .unwrap();
+            let depth_image_views: Vec<vk::ImageView> = depth_images
+                .into_iter()
+                .map(|depth_image| {
+                    let depth_image_view_info = vk::ImageViewCreateInfo::default()
+                        .subresource_range(
+                            vk::ImageSubresourceRange::default()
+                                .aspect_mask(vk::ImageAspectFlags::DEPTH)
+                                .level_count(1)
+                                .layer_count(1),
+                        )
+                        .view_type(vk::ImageViewType::TYPE_2D)
+                        .format(depth_format)
+                        .image(depth_image);
+                    device
+                        .create_image_view(&depth_image_view_info, None)
+                        .unwrap()
+                })
+                .collect();
 
             // ----------------------------------------------------------------
             // create rendering pipeline
@@ -959,6 +1069,11 @@ impl ApplicationHandler for App {
             let rasterization_state = vk::PipelineRasterizationStateCreateInfo::default()
                 .polygon_mode(vk::PolygonMode::FILL)
                 .cull_mode(vk::CullModeFlags::BACK)
+                .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
+                .line_width(1.0);
+            let rasterization_state_line = vk::PipelineRasterizationStateCreateInfo::default()
+                .polygon_mode(vk::PolygonMode::LINE)
+                .cull_mode(vk::CullModeFlags::NONE)
                 .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
                 .line_width(1.0);
             // let blend_attachment_state = vk::PipelineColorBlendAttachmentState::default();
@@ -1032,6 +1147,45 @@ impl ApplicationHandler for App {
                 .depth_stencil_state(&depth_stencil_state)
                 .dynamic_state(&dynamic_state)
                 .push_next(&mut pipeline_create);
+
+            let wire_pipeline = {
+                let mut wireframe_fragment_spv_file =
+                    Cursor::new(&include_bytes!("./shader/wirefrag.spv")[..]);
+                let wireframe_fragment_code = read_spv(&mut wireframe_fragment_spv_file)
+                    .expect("Failed to read wireframe_fragment shader spv file.");
+                let wireframe_fragment_shader_info =
+                    vk::ShaderModuleCreateInfo::default().code(&wireframe_fragment_code);
+                let vertex_shader_module = device
+                    .create_shader_module(&vertex_shader_info, None)
+                    .expect("Vertex shader module error.");
+                let wireframe_fragment_shader_module = device
+                    .create_shader_module(&wireframe_fragment_shader_info, None)
+                    .expect("wireframe_fragment shader module error.");
+                let wireframe_shader_stages = [
+                    vk::PipelineShaderStageCreateInfo::default()
+                        .name(c"main")
+                        .stage(vk::ShaderStageFlags::VERTEX)
+                        .module(vertex_shader_module),
+                    vk::PipelineShaderStageCreateInfo::default()
+                        .name(c"main")
+                        .stage(vk::ShaderStageFlags::FRAGMENT)
+                        .module(wireframe_fragment_shader_module),
+                ];
+
+                let depth_stencil_state_wire = vk::PipelineDepthStencilStateCreateInfo::default()
+                    .depth_compare_op(vk::CompareOp::NEVER);
+                let wireframe_pipeline_create_info = graphics_pipeline_create_info
+                    .stages(&wireframe_shader_stages)
+                    .rasterization_state(&rasterization_state_line)
+                    .depth_stencil_state(&depth_stencil_state_wire);
+                device
+                    .create_graphics_pipelines(
+                        vk::PipelineCache::null(),
+                        &[wireframe_pipeline_create_info],
+                        None,
+                    )
+                    .expect("Could not create graphics pipeline")[0]
+            };
 
             let pipeline = device
                 .create_graphics_pipelines(
@@ -1160,6 +1314,10 @@ impl ApplicationHandler for App {
                 &mut vertex_compute_bytecode,
                 c"main",
             );
+
+            let mut validate_bytecode = Cursor::new(&include_bytes!("./shader/validate.spv")[..]);
+            let validate_pipeline =
+                create_compute_pipeline(&device, pipeline_layout, &mut validate_bytecode, c"main");
             // For reset.spv (entry reset)
             let mut reset_bytecode = Cursor::new(&include_bytes!("./shader/reset.spv")[..]);
             let reset_pipeline =
@@ -1176,6 +1334,10 @@ impl ApplicationHandler for App {
                 std::mem::transmute(algorithm_data.cbt.leaves.as_slice());
 
             let mem_props = device_memory_properties;
+            let mut curr_id_data = vec![INVALID_POINTER; algorithm_data.num_memory_blocks as usize];
+            for i in 0..6 {
+                curr_id_data[i] = i as u32;
+            }
 
             struct BufferCreationBoilerplate<'a> {
                 device: &'a ash::Device,
@@ -1230,17 +1392,7 @@ impl ApplicationHandler for App {
                     algorithm_data.root_bisector_vertices.as_slice(),
                     BufferUsageFlags::UNIFORM_BUFFER,
                     &boilerplate,
-                ), /*GPUBuffer::<[Vec3; 3]>::new_with_data(
-                       &device,
-                       algorithm_data.root_bisector_vertices.as_slice(),
-                       mem_props,
-                       vk::BufferUsageFlags::UNIFORM_BUFFER,
-                       vk::SharingMode::EXCLUSIVE,
-                       vk::MemoryPropertyFlags::DEVICE_LOCAL,
-                       setup_command_buffer,
-                       setup_commands_reuse_fence,
-                       present_queue,
-                   )*/
+                ),
 
                 cbt_interior: GPUBuffer::<u32>::new_with_data(
                     &device,
@@ -1373,16 +1525,22 @@ impl ApplicationHandler for App {
                     present_queue,
                 ),
 
-                vertex_buffer: GPUBuffer::<[Vec3; 3]>::new_with_data(
-                    &device,
+                vertex_buffer: mapped_buffer_from_data(
                     algorithm_data.vertex_buffer.as_slice(),
-                    mem_props,
+                    vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_SRC,
+                    &boilerplate,
+                ),
+
+                vertex_buffer_swapback: mapped_buffer_from_data(
+                    algorithm_data.vertex_buffer.as_slice(),
+                    vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
+                    &boilerplate,
+                ),
+
+                curr_id_buffer: allocated_buffer_from_data(
+                    curr_id_data.as_slice(),
                     vk::BufferUsageFlags::STORAGE_BUFFER,
-                    vk::SharingMode::EXCLUSIVE,
-                    vk::MemoryPropertyFlags::DEVICE_LOCAL,
-                    setup_command_buffer,
-                    setup_commands_reuse_fence,
-                    present_queue,
+                    &boilerplate,
                 ),
                 reset_pipeline: reset_pipeline,
                 dispatch_allocate_pipeline: dispatch_allocate_pipeline,
@@ -1397,6 +1555,7 @@ impl ApplicationHandler for App {
                 merge_pipeline: merge_pipeline,
                 classify_pipeline: classify_pipeline,
                 vertex_compute_pipeline: vertex_compute_pipeline,
+                validate_pipeline: validate_pipeline,
             };
 
             device.device_wait_idle().expect("Wait idle");
@@ -1439,12 +1598,12 @@ impl ApplicationHandler for App {
 
                 // draw
                 vertex_buffer: scene_buffer_handles.vertex_buffer.device_address(),
+                curr_id_buffer: scene_buffer_handles.curr_id_buffer.device_address(),
 
                 // integers
                 num_memory_blocks: algorithm_data.cbt.leaves.len() as u32 * BITFIELD_INT_SIZE,
                 base_depth: algorithm_data.base_depth,
                 cbt_depth: algorithm_data.cbt.depth,
-                debug_counter: 0,
             };
             println!("vertex_buffer_address: {:?}", scene.vertex_buffer);
             let scene_buffer: MappedBuffer<SceneDataGPU> = GPUBuffer::<SceneDataGPU>::new_with_data(
@@ -1483,20 +1642,19 @@ impl ApplicationHandler for App {
                 want_merge_buffer_count: 0,
                 merging_bisector_count: 0,
                 num_allocated_blocks: algorithm_data.cbt.interior[0],
-                debug_counter: 0,
+                debug_data: DebugData::new(),
             };
-            let dispatch_buffer: MappedBuffer<DispatchDataGPU> =
-                GPUBuffer::<DispatchDataGPU>::new_with_data(
-                    &device,
-                    std::slice::from_ref(&dispatch), // &[DispatchSizeGPU]
-                    mem_props,
-                    vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::INDIRECT_BUFFER,
-                    vk::SharingMode::EXCLUSIVE,
-                    vk::MemoryPropertyFlags::DEVICE_LOCAL,
-                    setup_command_buffer,
-                    setup_commands_reuse_fence,
-                    present_queue,
-                );
+            let dispatch_buffer: MappedBuffer<DispatchDataGPU> = mapped_buffer_from_data(
+                std::slice::from_ref(&dispatch), // &[DispatchSizeGPU]
+                vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::INDIRECT_BUFFER,
+                &boilerplate,
+            );
+
+            let dispatch_buffer_swapback: MappedBuffer<DispatchDataGPU> = mapped_buffer_from_data(
+                std::slice::from_ref(&dispatch), // &[DispatchSizeGPU]
+                vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::INDIRECT_BUFFER,
+                &boilerplate,
+            );
 
             self.state = Some(State {
                 window: window,
@@ -1509,8 +1667,9 @@ impl ApplicationHandler for App {
                 present_queue: present_queue,
                 present_image_views: present_image_views,
                 present_images: present_images,
-                depth_image_view: depth_image_view,
+                depth_image_views: depth_image_views,
                 pipeline: pipeline,
+                wire_pipeline: wire_pipeline,
                 pipeline_layout: pipeline_layout,
                 present_complete_semaphore: present_complete_semaphore,
                 render_complete_semaphore: render_complete_semaphore,
@@ -1527,7 +1686,7 @@ impl ApplicationHandler for App {
                 scene_buffer_handles,
 
                 camera: CameraState::new(
-                    Vec3::new(0.0, 0.0, 2.0),
+                    Vec3::new(0.0, 0.0, 50.0),
                     0.1,
                     0.0,
                     PI / 2.0,
@@ -1537,6 +1696,12 @@ impl ApplicationHandler for App {
                     },
                     0.1,
                 ),
+
+                algorithm_data: algorithm_data,
+                divide: false,
+                num_iters: 0,
+                swapback: false,
+                dispatch_buffer_swapback: dispatch_buffer_swapback,
             })
         }
     }
@@ -1568,7 +1733,7 @@ impl ApplicationHandler for App {
                 } else if state.camera.pitch > PI - eps {
                     state.camera.pitch = PI - eps;
                 }
-                println!("Pitch: {:?}", state.camera.pitch);
+                // println!("Pitch: {:?}", state.camera.pitch);
             }
             _ => (),
         }
@@ -1605,22 +1770,44 @@ impl ApplicationHandler for App {
             } => match key.as_ref() {
                 Key::Character("w") => {
                     state.camera.pos += state.camera.lookdir() * 0.3;
-                    println!("Camera Position: {:?}", state.camera.pos);
+                    // println!("Camera Position: {:?}", state.camera.pos);
                 }
                 Key::Character("a") => {
                     let left = Vec3::Z.cross(state.camera.lookdir()).normalize();
                     state.camera.pos += left * 0.3;
-                    println!("Camera Position: {:?}", state.camera.pos);
+                    // println!("Camera Position: {:?}", state.camera.pos);
                 }
                 Key::Character("s") => {
                     state.camera.pos += state.camera.lookdir() * -0.3;
-                    println!("Camera Position: {:?}", state.camera.pos);
+                    // println!("Camera Position: {:?}", state.camera.pos);
                 }
                 Key::Character("d") => {
                     let right = -Vec3::Z.cross(state.camera.lookdir()).normalize();
                     state.camera.pos += right * 0.3;
-                    println!("Camera Position: {:?}", state.camera.pos);
+                    // println!("Camera Position: {:?}", state.camera.pos);
                 }
+                Key::Character("r") => {
+                    if state.swapback == false {
+                        state.divide = true;
+                    }
+                }
+                Key::Character("t") => {
+                    state.swapback = !state.swapback;
+                    println!("swapback: {:?}", state.swapback)
+                }
+                Key::Character("f") => unsafe {
+                    /*
+                    state.dispatch_buffer.mapped_slice()[0]
+                        .draw_indirect_command
+                        .vertex_count = ((1 << 17) * 3) as u32;
+                    println!(
+                        "Draw Indirect Count: {:?}",
+                        state.dispatch_buffer.mapped_slice()[0]
+                            .draw_indirect_command
+                            .vertex_count
+                    )*/
+                },
+
                 _ => (),
             },
             _ => (),

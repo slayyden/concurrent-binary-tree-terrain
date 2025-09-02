@@ -1,6 +1,6 @@
 #include "cbt.slang"
 float3[3] heapid_to_vertices(
-    uint heapid, )
+    uint heapid)
 {
     // heapid: 0b000...01 root_bisector_index split_code
     // the most significant 1 is a "tag" that allows us to compute the length of the split code
@@ -19,6 +19,11 @@ float3[3] heapid_to_vertices(
                                 root_bisector_vertices[root_bisector_index * 3 + 1],
                                 root_bisector_vertices[root_bisector_index * 3 + 2] };
 
+    if (depth == base_level)
+    {
+        return curr_bisector;
+    }
+
     uint peak_idx = 2;
     for (int i = depth - base_level - 1; i >= 0; --i)
     {
@@ -32,6 +37,7 @@ float3[3] heapid_to_vertices(
         curr_bisector[replacement_slot] = new_vertex;
         peak_idx = replacement_slot;
     };
+
     return curr_bisector;
 }
 
@@ -39,20 +45,21 @@ float3[3] heapid_to_vertices(
 [numthreads(WORKGROUP_SIZE, 1, 1)]
 void vertex_compute(uint3 tid: SV_DispatchThreadID)
 {
+    let vertex_buffer = pc.vertex_buffer;
     if (tid.x >= pc.scene.cbt_interior[0])
     {
         return;
     }
 
     let curr_id = one_bit_to_id(tid.x);
+    pc.scene.curr_id_buffer[tid.x] = curr_id;
     let heapid = pc.scene.heapid_buffer[curr_id];
     // let vertices_slot = pc.dispatch.vertex_buffer_count.add(1);
     let vertices_slot = tid.x;
     let triangle = heapid_to_vertices(heapid);
 
     // displace verts here
-
-    pc.scene.vertex_buffer[vertices_slot * 3] = triangle[0];
-    pc.scene.vertex_buffer[vertices_slot * 3 + 1] = triangle[1];
-    pc.scene.vertex_buffer[vertices_slot * 3 + 2] = triangle[2];
+    vertex_buffer[vertices_slot * 3] = triangle[0];
+    vertex_buffer[vertices_slot * 3 + 1] = triangle[1];
+    vertex_buffer[vertices_slot * 3 + 2] = triangle[2];
 }

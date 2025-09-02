@@ -12,14 +12,12 @@ void split_element(uint3 tid: SV_DispatchThreadID)
     let neighbors_buffer = pc.scene.neighbors_buffer;
     let base_depth = pc.scene.base_depth;
     uint3 curr_neighbors = neighbors_buffer[curr_id];
-    // var pc.dispatch.remaining_memory_count = pc.dispatch.remaining_memory_count;
-    // var pc.dispatch.allocation_counter = pc.dispatch.allocation_counter;
     let splitting_buffer = pc.scene.splitting_buffer;
     let heapid_buffer = pc.scene.heapid_buffer;
-    let bisector_command_buffer = (Atomic<uint> *)pc.scene.bisector_split_command_buffer;
+    let bisector_command_buffer = pc.scene.bisector_split_command_buffer;
     let bisector_state_buffer = pc.scene.bisector_state_buffer;
 
-    // Check NEXT neighbor
+    // check if the next neighbor is gonna split us anyway
     uint next = curr_neighbors[NEXT];
     if (next != INVALID_INDEX)
     {
@@ -30,7 +28,7 @@ void split_element(uint3 tid: SV_DispatchThreadID)
         }
     }
 
-    // Check PREV neighbor
+    // check if the prev neighbor is gonna split us anyway
     uint prev = curr_neighbors[PREV];
     if (prev != INVALID_INDEX)
     {
@@ -45,18 +43,18 @@ void split_element(uint3 tid: SV_DispatchThreadID)
     uint current_depth = heap_id_depth(heapid); // 3
 
     uint twin_id = curr_neighbors[TWIN]; // 3
-    int max_required_memory = (twin_id == INVALID_INDEX)                     ? 2
-                              : (neighbors_buffer[twin_id][TWIN] == curr_id) ? 4
-                                                                             : 3 * (current_depth - base_depth);
-    // 2
-    int remaining_memory = pc.dispatch.remaining_memory_count.add(-max_required_memory); // big number
-
+    // check if we have enough memory to allocate compatibility chain elements
+    int max_required_memory = (twin_id == INVALID_INDEX)                     ? 2                                     // boundary
+                              : (neighbors_buffer[twin_id][TWIN] == curr_id) ? 4                                     // perfect matching
+                                                                             : 3 * (current_depth - base_depth) + 2; // triple split for each entry in compatibility chain
+    int remaining_memory = pc.dispatch.remaining_memory_count.add(-max_required_memory);
     if (remaining_memory < max_required_memory)
     {
         pc.dispatch.remaining_memory_count.add(max_required_memory); // undo subtraction
         return;
     }
 
+    // check if another thread has already split this bisector
     uint base_pattern = bisector_command_buffer[curr_id].or(CENTER_SPLIT);
     if (base_pattern != NO_SPLIT)
     {
@@ -64,50 +62,61 @@ void split_element(uint3 tid: SV_DispatchThreadID)
         return;
     }
 
+    // good to split. start by splitting this bisector
+    int used_memory = 2; // one for each split child
     uint target_location = pc.dispatch.splitting_buffer_count.add(1);
     splitting_buffer[target_location] = curr_id;
 
-    int used_memory = 2; // one for each split child
+    // iterate over compabibility chain
     while (true)
     {
+        // base case: boundary
         if (twin_id == INVALID_INDEX)
         {
             break;
         }
 
-        uint twin_heapid = heapid_buffer[twin_id];    // 1011
-        uint twin_depth = heap_id_depth(twin_heapid); // 3
+        uint twin_heapid = heapid_buffer[twin_id];
+        uint twin_depth = heap_id_depth(twin_heapid);
         uint3 twin_neighbors = neighbors_buffer[twin_id];
 
+        // base case: perfect match
         if (twin_neighbors[TWIN] == curr_id)
         {
             uint twin_prev_command = bisector_command_buffer[twin_id].or(CENTER_SPLIT);
+            // check if twin is already split
+            // if not, add to splitting buffer and claim memory
             if (twin_prev_command == NO_SPLIT)
             {
                 uint alloc_loc = pc.dispatch.splitting_buffer_count.add(1);
                 splitting_buffer[alloc_loc] = twin_id;
-                used_memory += 1;
+                used_memory += 2;
             }
             break;
-            // done = true;
         }
+        // otherwise: twin needs a side split
         else
         {
+            // split the twin
             uint twin_prev_command = (twin_neighbors[NEXT] == curr_id)
                                          ? bisector_command_buffer[twin_id].or(RIGHT_DOUBLE_SPLIT)
                                          : bisector_command_buffer[twin_id].or(LEFT_DOUBLE_SPLIT);
 
+            // twin is already splitting
+            // claim 1 slot for the side split and we're done
             if (twin_prev_command != NO_SPLIT)
             {
                 used_memory += 1;
                 break;
-                // done = true;
             }
+            // twin has not been split at all
+            // claim 3 slots for the double split and traverse to the twin
+            // to handle its compatibility chain
             else
             {
                 uint alloc_loc = pc.dispatch.splitting_buffer_count.add(1);
                 splitting_buffer[alloc_loc] = twin_id;
-                used_memory += 2;
+                used_memory += 3;
 
                 curr_id = twin_id;
                 current_depth = twin_depth;
@@ -115,6 +124,7 @@ void split_element(uint3 tid: SV_DispatchThreadID)
             }
         }
 
+        // return unclaimed memory
         pc.dispatch.remaining_memory_count.add(max_required_memory - used_memory);
     }
 }

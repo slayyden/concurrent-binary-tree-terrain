@@ -100,6 +100,8 @@ pub fn record_submit_commandbuffer<F: FnOnce(&Device, vk::CommandBuffer)>(
             .expect("Queue submit failed.");
     }
 }
+
+#[derive(Clone, Copy, Debug)]
 pub struct AllocatedBuffer<T> {
     buffer: vk::Buffer,
     allocation: vk::DeviceMemory,
@@ -123,6 +125,7 @@ impl<T> AllocatedBuffer<T> {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
 pub struct MappedBuffer<T> {
     allocated_buffer: AllocatedBuffer<T>,
     ptr: *mut T,
@@ -1191,12 +1194,11 @@ pub struct SceneDataGPU {
 
     // draw
     pub vertex_buffer: vk::DeviceAddress,
-
+    pub curr_id_buffer: vk::DeviceAddress,
     // integers
     pub num_memory_blocks: u32,
     pub base_depth: u32,
     pub cbt_depth: u32,
-    pub debug_counter: u32,
 }
 
 pub struct SceneCPUHandles {
@@ -1217,7 +1219,7 @@ pub struct SceneCPUHandles {
     pub bisector_split_command_buffer: AllocatedBuffer<u32>,
     pub neighbors_buffer: AllocatedBuffer<[u32; 3]>,
     pub splitting_buffer: AllocatedBuffer<u32>,
-    pub heapid_buffer: AllocatedBuffer<u32>,
+    pub heapid_buffer: MappedBuffer<u32>,
 
     // allocate
     pub dispatch_allocate_pipeline: vk::Pipeline,
@@ -1234,9 +1236,11 @@ pub struct SceneCPUHandles {
     pub merging_bisector_buffer: AllocatedBuffer<u32>,
     pub vertex_compute_pipeline: vk::Pipeline,
     // draw
-    pub vertex_buffer: AllocatedBuffer<[Vec3; 3]>,
+    pub vertex_buffer: MappedBuffer<[Vec3; 3]>,
+    pub curr_id_buffer: AllocatedBuffer<u32>,
 
     // reset
+    pub validate_pipeline: vk::Pipeline,
     pub reset_pipeline: vk::Pipeline,
 
     pub split_element_pipeline: vk::Pipeline,
@@ -1246,7 +1250,38 @@ pub struct SceneCPUHandles {
     pub merge_pipeline: vk::Pipeline,
     pub reduce_pipeline: vk::Pipeline,
     pub post_reduce_pipeline: vk::Pipeline,
+
+    pub vertex_buffer_swapback: MappedBuffer<[Vec3; 3]>,
 }
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct DebugData {
+    pub curr_heapid: u32,
+    pub curr_id: u32,
+    pub neighbor_heapid: u32,
+    pub neighbor_id: u32,
+    pub curr_verts: [Vec3; 3],
+    pub neighbor_verts: [Vec3; 3],
+    pub num_equal: u32,
+    pub equal_indices: [i32; 4],
+}
+
+impl DebugData {
+    pub fn new() -> Self {
+        Self {
+            curr_heapid: 0,
+            curr_id: 0,
+            neighbor_heapid: 0,
+            neighbor_id: 0,
+            curr_verts: [Vec3::ZERO; 3],
+            neighbor_verts: [Vec3::ZERO; 3],
+            num_equal: 0,
+            equal_indices: [-1; 4],
+        }
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct DispatchDataGPU {
@@ -1271,7 +1306,7 @@ pub struct DispatchDataGPU {
     pub num_allocated_blocks: u32,
 
     // DEBUG
-    pub debug_counter: u32,
+    pub debug_data: DebugData,
 }
 pub struct PipelineData {
     // written once at initialization

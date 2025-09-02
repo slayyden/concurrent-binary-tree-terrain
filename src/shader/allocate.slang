@@ -11,13 +11,13 @@ void allocate(
         return;
     }
     let curr_id = pc.scene.splitting_buffer[tid];
-    let command = pc.scene.bisector_split_command_buffer[curr_id];
+    let command = pc.scene.bisector_split_command_buffer[curr_id].load();
 
     let num_allocations = countbits(command) + 1;
 
     let first_bit_index = pc.dispatch.allocation_counter.add(num_allocations);
 
-    var allocation_indices = uint4(INVALID_INDEX, INVALID_INDEX, INVALID_INDEX, INVALID_INDEX);
+    var allocation_indices = uint4(INVALID_INDEX);
 
     for (int i = 0; i < num_allocations; ++i)
     {

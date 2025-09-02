@@ -11,8 +11,5 @@ void post_reduce(uint3 tid: SV_DispatchThreadID)
         pc.dispatch.num_allocated_blocks = num_bisectors;
         pc.dispatch.draw_indirect_command.vertex_count = 3 * num_bisectors;
         pc.dispatch.dispatch_vertex_compute_command.x = div_ceil(num_bisectors, WORKGROUP_SIZE);
-
-        // pc.dispatch.debug_counter += 1;
-        pc.scene.debug_counter += 1;
     }
 }

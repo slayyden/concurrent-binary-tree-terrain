@@ -184,42 +184,4 @@ void reduce(uint3 threadId: SV_DispatchThreadID)
         pc.dispatch.dispatch_vertex_compute_command.x = div_ceil(num_bisectors, WORKGROUP_SIZE);
     }
     return;
-    /*
-        for (int i = 0; i < 4; ++i)
-        {
-            let j = tid * (i + 1);
-            if (j <= interior_offset)
-            {
-                interior[interior_offset + j] = countbits(leaves[j].load());
-            }
-        }
-
-        DeviceMemoryBarrier();
-        // index_of_last_level = depth
-        // 32 (depth) -> 16 (depth - 1) -> 8 (depth - 2) -> 4 (depth - 3) -> 2 (depth - 4) -> 1 (depth - 5)
-        // all these levels have been filled
-        let deepest_filled_level = pc.scene.cbt_depth - 5;
-
-        for (int level = deepest_filled_level - 1; level >= 0; --level)
-        {
-            let level_start = (1 << level) - 1;
-            let level_end = (1 << (level + 1)) - 1;
-            for (int i = 0; i < 4; ++i)
-            {
-                let j = tid * (i + 1); // TODO change to coalesce memory
-                if (level_start <= j && j < level_end)
-                {
-                    interior[j] =
-                        interior[2 * j + 1] + interior[2 * j + 2];
-                    if (j == 0)
-                    {
-                        pc.dispatch.debug_counter = interior[j];
-                    }
-                }
-            }
-            DeviceMemoryBarrier();
-        }
-
-    return;
-    */
 }
