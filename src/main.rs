@@ -28,13 +28,12 @@ use winit::{
 #[derive(Debug)]
 struct PushConstants {
     view_project: Mat4,
-
     scene: vk::DeviceAddress,
     dispatch: vk::DeviceAddress,
-    vertex_buffer: vk::DeviceAddress,
-
+    // vertex_buffer: vk::DeviceAddress,
     camera_position: Vec3A,
     lookdir: Vec3A,
+    swapback: u32,
 }
 
 struct State {
@@ -173,18 +172,13 @@ impl State {
                 &[pre_barrier],
             );
 
-            let vertex_buffer = if !self.swapback {
-                self.scene_buffer_handles.vertex_buffer
-            } else {
-                self.scene_buffer_handles.vertex_buffer_swapback
-            };
             let push_constants = PushConstants {
                 view_project: self.camera.projection_matrix() * self.camera.view_matrix(),
                 scene: self.scene_buffer.device_address(),
                 dispatch: self.dispatch_buffer.device_address(),
                 camera_position: Vec3A::from(self.camera.pos),
                 lookdir: Vec3A::from(self.camera.lookdir()),
-                vertex_buffer: vertex_buffer.device_address(),
+                swapback: if self.swapback { 1 } else { 0 },
             };
 
             // push constants
@@ -262,6 +256,7 @@ impl State {
             // compute_write_compute_read_memory_barrier();
 
             if self.divide {
+                /*
                 let region = vk::BufferCopy::default()
                     .size(self.scene_buffer_handles.vertex_buffer.size_in_bytes());
                 dev.cmd_copy_buffer(
@@ -269,7 +264,7 @@ impl State {
                     self.scene_buffer_handles.vertex_buffer.buffer(),
                     self.scene_buffer_handles.vertex_buffer_swapback.buffer(),
                     &[region],
-                );
+                );*/
                 // COMPUTE
                 // classify
                 {
@@ -771,7 +766,9 @@ impl ApplicationHandler for App {
             let mut vulkan_12_features = vk::PhysicalDeviceVulkan12Features::default()
                 .buffer_device_address(true)
                 .timeline_semaphore(true)
-                .scalar_block_layout(true);
+                .scalar_block_layout(true)
+                .shader_int8(true)
+                .storage_push_constant8(true);
             let mut vulkan_13_features = vk::PhysicalDeviceVulkan13Features::default()
                 .dynamic_rendering(true)
                 .synchronization2(true);
@@ -1339,6 +1336,14 @@ impl ApplicationHandler for App {
                 curr_id_data[i] = i as u32;
             }
 
+            let swapback_data_initial = vec![
+                SwapbackData {
+                    vertex_position: [Vec3::ZERO, Vec3::ZERO, Vec3::ZERO],
+                    split_command: 0,
+                    want_split: 0
+                };
+                algorithm_data.num_memory_blocks as usize
+            ];
             struct BufferCreationBoilerplate<'a> {
                 device: &'a ash::Device,
                 mem_props: PhysicalDeviceMemoryProperties,
@@ -1530,10 +1535,9 @@ impl ApplicationHandler for App {
                     vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_SRC,
                     &boilerplate,
                 ),
-
-                vertex_buffer_swapback: mapped_buffer_from_data(
-                    algorithm_data.vertex_buffer.as_slice(),
-                    vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
+                swapback_buffer: allocated_buffer_from_data(
+                    swapback_data_initial.as_slice(),
+                    vk::BufferUsageFlags::STORAGE_BUFFER,
                     &boilerplate,
                 ),
 
@@ -1599,6 +1603,8 @@ impl ApplicationHandler for App {
                 // draw
                 vertex_buffer: scene_buffer_handles.vertex_buffer.device_address(),
                 curr_id_buffer: scene_buffer_handles.curr_id_buffer.device_address(),
+
+                swapback_buffer: scene_buffer_handles.swapback_buffer.device_address(),
 
                 // integers
                 num_memory_blocks: algorithm_data.cbt.leaves.len() as u32 * BITFIELD_INT_SIZE,

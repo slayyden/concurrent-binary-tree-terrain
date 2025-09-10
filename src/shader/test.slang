@@ -12,7 +12,7 @@ struct v2p
 [shader("vertex")]
 v2p vertexMain(uint vid: SV_VertexID)
 {
-    let vertex_buffer = pc.vertex_buffer;
+    // let vertex_buffer = pc.vertex_buffer;
     const float3 colors[3] = float3[3](
         float3(1.0f, 0.0f, 0.0f), // red
         float3(0.0f, 1.0f, 0.0f), // green
@@ -22,7 +22,7 @@ v2p vertexMain(uint vid: SV_VertexID)
 
     var color = float3(1.0, 0.0, 0.0);
     color = colors[vid % 3];
-    float4 pos = float4(vertex_buffer[vid], 1);
+    float4 pos = float4(get_vertex_buffer(pc, vid), 1);
     pos = mul(pos, pc.view_project);
 
     let curr_id = pc.scene.curr_id_buffer[vid / 3];

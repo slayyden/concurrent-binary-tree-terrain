@@ -181,7 +181,9 @@ void reduce(uint3 threadId: SV_DispatchThreadID)
         pc.dispatch.remaining_memory_count.store((int)(1 << 17) - (int)num_bisectors);
         pc.dispatch.num_allocated_blocks = num_bisectors;
         pc.dispatch.draw_indirect_command.vertex_count = 3 * num_bisectors;
-        pc.dispatch.dispatch_vertex_compute_command.x = div_ceil(num_bisectors, WORKGROUP_SIZE);
+        // pc.dispatch.dispatch_vertex_compute_command.x = div_ceil(num_bisectors, WORKGROUP_SIZE);
+        // FOR SWAPBACK ONLY
+        pc.dispatch.dispatch_vertex_compute_command.x = div_ceil((1 << 17), WORKGROUP_SIZE);
     }
     return;
 }

@@ -32,6 +32,9 @@ struct SceneData
     float3 *vertex_buffer;
     uint *curr_id_buffer;
 
+    // swapback
+    SwapbackData *swapback_buffer;
+
     // integers
     uint num_memory_blocks;
     uint base_depth;
@@ -92,9 +95,20 @@ struct PushConstant
     float4x4 view_project;
     SceneData *scene;
     DispatchData *dispatch;
-    float3 *vertex_buffer;
     float3 cam_pos;
+    uint8_t pad0;
+
     float3 lookdir;
+    uint8_t pad1;
+
+    uint swapback;
+}
+
+struct SwapbackData
+{
+    float3 vertex_position[3];
+    uint split_command;
+    uint8_t want_split; // 0 for false, 1 for true
 }
 
 static const uint WORKGROUP_SIZE = 64;
@@ -176,3 +190,19 @@ inline T map_range<T>(T val, T low0, T high0, T low1, T high1)
     return low1 + t * (high1 - low1);
 }
 
+inline bool swapback(PushConstant pc)
+{
+    return (pc.swapback != 0);
+}
+
+inline float3 get_vertex_buffer(PushConstant pc, uint index)
+{
+    if (swapback(pc))
+    {
+        return pc.scene.swapback_buffer[index / 3].vertex_position[index % 3];
+    }
+    else
+    {
+        return pc.scene.vertex_buffer[index];
+    }
+}

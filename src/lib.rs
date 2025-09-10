@@ -1163,6 +1163,14 @@ pub fn merge(
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
+pub struct SwapbackData {
+    pub vertex_position: [Vec3; 3],
+    pub split_command: u32,
+    pub want_split: u8, // 0 for false, 1 for true
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
 pub struct SceneDataGPU {
     // written once at initialization
     pub root_bisector_vertices: vk::DeviceAddress,
@@ -1195,6 +1203,9 @@ pub struct SceneDataGPU {
     // draw
     pub vertex_buffer: vk::DeviceAddress,
     pub curr_id_buffer: vk::DeviceAddress,
+
+    pub swapback_buffer: vk::DeviceAddress,
+
     // integers
     pub num_memory_blocks: u32,
     pub base_depth: u32,
@@ -1250,8 +1261,8 @@ pub struct SceneCPUHandles {
     pub merge_pipeline: vk::Pipeline,
     pub reduce_pipeline: vk::Pipeline,
     pub post_reduce_pipeline: vk::Pipeline,
-
-    pub vertex_buffer_swapback: MappedBuffer<[Vec3; 3]>,
+    // pub vertex_buffer_swapback: MappedBuffer<[Vec3; 3]>,
+    pub swapback_buffer: AllocatedBuffer<SwapbackData>,
 }
 
 #[repr(C)]

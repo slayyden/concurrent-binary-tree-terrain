@@ -524,3 +524,28 @@ Symptoms:
     - the neighbors are INVALID
 How many iterations?
 - 30, 19, 30, 34, 20, 26, 34, 29
+
+# Dumping Debug Info
+
+                        Frame n
+                        - Classify
+                        - Split
+                        - Allocate
+                        - Update Pointers
+                        - CBT Reduce
+swapback lifetime---|---- Vertex Compute -> Vertex Position Data
+                    |   - Draw
+                    |   Frame n+1
+                    |   - Classify
+                    |   - Split
+                    |   - Allocate
+                    |   - Update Pointers
+                    |---- CBT Reduce
+                        - Vertex Compute
+                        - Draw
+
+
+
+```
+
+```

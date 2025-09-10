@@ -45,7 +45,12 @@ float3[3] heapid_to_vertices(
 [numthreads(WORKGROUP_SIZE, 1, 1)]
 void vertex_compute(uint3 tid: SV_DispatchThreadID)
 {
-    let vertex_buffer = pc.vertex_buffer;
+    // store old verts for swapback vertices
+    pc.scene.swapback_buffer[tid.x].vertex_position[0] = pc.scene.vertex_buffer[tid.x * 3];
+    pc.scene.swapback_buffer[tid.x].vertex_position[1] = pc.scene.vertex_buffer[tid.x * 3 + 1];
+    pc.scene.swapback_buffer[tid.x].vertex_position[2] = pc.scene.vertex_buffer[tid.x * 3 + 2];
+
+    let vertex_buffer = pc.scene.vertex_buffer;
     if (tid.x >= pc.scene.cbt_interior[0])
     {
         return;
