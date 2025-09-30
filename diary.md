@@ -544,8 +544,79 @@ swapback lifetime---|---- Vertex Compute -> Vertex Position Data
                         - Vertex Compute
                         - Draw
 
+# Double buffering
+                    - Classify
+                    - Split
+                    - Allocate
+bisector lifetime |- Update pointers
+                  |- CBT reduce
+                  |- Vertex compute ---| Vertex Lifetime
+                  |- Render            |
+                  |- Reset             |
+                  |- Classify          |
+                  |- Split             |
+                  |- Allocate          |
+                    - Update pointers  |
+                    - CBT reduce ------|
+                    - Vertex compute
+                    - Render
+                    - Reset
+Goal: Do not mutate any data in place.
+
+Should we use the bisector lifetime or the vertex lifetime?
+- vertices depend on the bisectors, but not vice versa
+- we should use bisector lifetime, vertices are DOWNSTREAM of bisectors
+
+- there is only 1 vertex buffer, which we recompute IF the bisectors change
+  - BUT we compute curr_id buffer at the same stage which we need to store
+  - easier to just store both
+- then we use the curr_id buffer
+
+
+Some buffers cannot be reconstructed statelessly and have to be copied over
+- neighbors buffer
+- heapid buffer
+
+Is there an easy way to swap between single and multi buffering?
+- we define the length of the bisector data buffer at comptime
+- only copy buffers if length > 1
+
+# Ring Buffer
+
+```
+[a, b, c]
+ ^num
+ ^curr
+
+[a, b, c]
+    ^num
+    ^curr
+
+[a, b, c]
+       ^num
+       ^curr
+```
+WAIT IM STUPID
+```odin
+bisector_data : [NUM_STORED]BisectorData
+bisector_data[0] = initialize_bisector_data()
+num_iters := 0
+for {
+    advance_iter := process_input()
+    if (advance_iter) {
+        curr := &bisector_data[num_iters]
+        num_iters = (num_iters + 1) % NUM_STORED
+        bisector_data[num_iters] = compute_next_iter()
+    }
+}
+
+}
+
 
 
 ```
+<<<<<<< HEAD
 
 ```
+=======
+>>>>>>> e0c0d4f (swapback storage expanded)

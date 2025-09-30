@@ -12,7 +12,7 @@ struct v2p
 [shader("vertex")]
 v2p vertexMain(uint vid: SV_VertexID)
 {
-    // let vertex_buffer = pc.vertex_buffer;
+    let vertex_buffer = pc.scene.vertex_buffer;
     const float3 colors[3] = float3[3](
         float3(1.0f, 0.0f, 0.0f), // red
         float3(0.0f, 1.0f, 0.0f), // green
