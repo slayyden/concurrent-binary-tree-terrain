@@ -2,7 +2,6 @@
 
 use std::{
     cmp::max,
-    iter::Map,
     marker::PhantomData,
     ptr::null_mut,
     slice,
@@ -158,6 +157,12 @@ pub trait GPUBuffer<T> {
 
     fn allocation(&self) -> vk::DeviceMemory;
     fn buffer(&self) -> vk::Buffer;
+    fn sized_buffer(&self) -> SizedBuffer {
+        SizedBuffer {
+            gpu_buffer: self.buffer(),
+            size_in_bytes: self.size_in_bytes(),
+        }
+    }
 
     fn size_in_bytes(&self) -> u64;
 }
@@ -1201,6 +1206,31 @@ pub struct SceneDataGPU {
     pub cbt_depth: u32,
 }
 
+pub struct PipelineHandles {
+    pub classify_pipeline: vk::Pipeline,
+
+    pub dispatch_split_pipeline: vk::Pipeline,
+    pub split_element_pipeline: vk::Pipeline,
+
+    pub dispatch_allocate_pipeline: vk::Pipeline,
+    pub allocate_pipeline: vk::Pipeline,
+
+    pub update_pointers_pipeline: vk::Pipeline,
+
+    pub dispatch_prepare_merge_pipeline: vk::Pipeline,
+    pub prepare_merge_pipeline: vk::Pipeline,
+
+    pub merge_pipeline: vk::Pipeline,
+
+    pub reduce_pipeline: vk::Pipeline,
+
+    pub vertex_compute_pipeline: vk::Pipeline,
+
+    pub validate_pipeline: vk::Pipeline,
+
+    pub reset_pipeline: vk::Pipeline,
+}
+
 pub struct SceneCPUHandles {
     // written once at initialization
     pub root_bisector_vertices: AllocatedBuffer<[Vec3; 3]>,
@@ -1211,47 +1241,55 @@ pub struct SceneCPUHandles {
 
     // classification stage
     // pub classification_pipeline: vk::Pipeline,
-    pub classify_pipeline: vk::Pipeline,
     pub bisector_state_buffer: AllocatedBuffer<u32>,
 
     // prepare split
-    pub dispatch_split_pipeline: vk::Pipeline,
     pub bisector_split_command_buffer: AllocatedBuffer<u32>,
     pub neighbors_buffer: AllocatedBuffer<[u32; 3]>,
     pub splitting_buffer: AllocatedBuffer<u32>,
     pub heapid_buffer: MappedBuffer<u32>,
 
     // allocate
-    pub dispatch_allocate_pipeline: vk::Pipeline,
     pub allocation_indices_buffer: AllocatedBuffer<[u32; 4]>,
 
     // split
     pub want_split_buffer: AllocatedBuffer<u32>,
 
     // prepare merge
-    pub dispatch_prepare_merge_pipeline: vk::Pipeline,
     pub want_merge_buffer: AllocatedBuffer<u32>,
 
     // merge
     pub merging_bisector_buffer: AllocatedBuffer<u32>,
-    pub vertex_compute_pipeline: vk::Pipeline,
     // draw
     pub vertex_buffer: MappedBuffer<[Vec3; 3]>,
     pub curr_id_buffer: AllocatedBuffer<u32>,
+}
+pub struct SizedBuffer {
+    pub gpu_buffer: vk::Buffer,
+    pub size_in_bytes: u64,
+}
 
-    // reset
-    pub validate_pipeline: vk::Pipeline,
-    pub reset_pipeline: vk::Pipeline,
-
-    pub split_element_pipeline: vk::Pipeline,
-    pub allocate_pipeline: vk::Pipeline,
-    pub update_pointers_pipeline: vk::Pipeline,
-    pub prepare_merge_pipeline: vk::Pipeline,
-    pub merge_pipeline: vk::Pipeline,
-    pub reduce_pipeline: vk::Pipeline,
-    pub post_reduce_pipeline: vk::Pipeline,
-
-    pub vertex_buffer_swapback: MappedBuffer<[Vec3; 3]>,
+impl SceneCPUHandles {
+    pub fn gpu_slices_iter(&self) -> impl Iterator<Item = SizedBuffer> {
+        // I HATE THIS LANGUAGE FUCK MY LIFE BRUH
+        [
+            self.root_bisector_vertices.sized_buffer(),
+            self.cbt_interior.sized_buffer(),
+            self.cbt_leaves.sized_buffer(),
+            self.bisector_state_buffer.sized_buffer(),
+            self.bisector_split_command_buffer.sized_buffer(),
+            self.neighbors_buffer.sized_buffer(),
+            self.splitting_buffer.sized_buffer(),
+            self.heapid_buffer.sized_buffer(),
+            self.allocation_indices_buffer.sized_buffer(),
+            self.want_split_buffer.sized_buffer(),
+            self.want_merge_buffer.sized_buffer(),
+            self.merging_bisector_buffer.sized_buffer(),
+            self.vertex_buffer.sized_buffer(),
+            self.curr_id_buffer.sized_buffer(),
+        ]
+        .into_iter()
+    }
 }
 
 #[repr(C)]

@@ -92,7 +92,6 @@ struct PushConstant
     float4x4 view_project;
     SceneData *scene;
     DispatchData *dispatch;
-    float3 *vertex_buffer;
     float3 cam_pos;
     float3 lookdir;
 }
