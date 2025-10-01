@@ -9,7 +9,7 @@ use std::{
     u32,
 };
 
-use glam::{Mat4, Vec3, Vec4};
+use glam::{Mat4, Vec3, Vec3A, Vec4};
 
 use ash::{
     Device,
@@ -255,7 +255,7 @@ impl<T: Copy> GPUBuffer<T> for AllocatedBuffer<T> {
             device,
             num_elems,
             mem_props,
-            usage | vk::BufferUsageFlags::TRANSFER_DST,
+            usage | vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::TRANSFER_SRC,
             sharing_mode,
             memory_type,
         );
@@ -1300,6 +1300,34 @@ impl SceneCPUHandles {
             self.curr_id_buffer.sized_buffer(),
         ]
         .into_iter()
+    }
+}
+
+pub struct CBTScene {
+    pub scene_buffer_handles: SceneCPUHandles,
+    pub scene_buffer: AllocatedBuffer<SceneDataGPU>,
+    pub dispatch_buffer: MappedBuffer<DispatchDataGPU>,
+}
+
+#[repr(C)]
+#[derive(Debug)]
+pub struct PushConstants {
+    view_project: Mat4,
+
+    scene: vk::DeviceAddress,
+    dispatch: vk::DeviceAddress,
+
+    camera_position: Vec3A,
+    lookdir: Vec3A,
+}
+
+pub fn get_push_constants(cbt_scene: &CBTScene, camera: &CameraState) -> PushConstants {
+    PushConstants {
+        view_project: camera.projection_matrix() * camera.view_matrix(),
+        scene: cbt_scene.scene_buffer.device_address(),
+        dispatch: cbt_scene.dispatch_buffer.device_address(),
+        camera_position: Vec3A::from(camera.pos),
+        lookdir: Vec3A::from(camera.lookdir()),
     }
 }
 

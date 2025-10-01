@@ -12,8 +12,8 @@ use ash::{
 use dirt_jam::*;
 use glam::{Mat4, Vec3, Vec3A};
 use std::{
-    alloc, cmp::max, error::Error, f32::consts::PI, ffi::CStr, io::Cursor, iter::Map, iter::zip,
-    mem::offset_of, num, os::raw::c_char, sync::atomic::Ordering, thread, time, u64,
+    alloc, cmp::max, cmp::min, error::Error, f32::consts::PI, ffi::CStr, io::Cursor, iter::Map,
+    iter::zip, mem::offset_of, num, os::raw::c_char, sync::atomic::Ordering, thread, time, u64,
 };
 use winit::{
     application::ApplicationHandler,
@@ -24,6 +24,7 @@ use winit::{
     window::{Window, WindowId},
 };
 
+<<<<<<< HEAD
 #[repr(C)]
 #[derive(Debug)]
 struct PushConstants {
@@ -42,6 +43,8 @@ struct CBTScene {
     dispatch_buffer: MappedBuffer<DispatchDataGPU>,
 }
 
+=======
+>>>>>>> 56002d8 (swapping back workds)
 const NUM_ROLLBACK_FRAMES: usize = 2;
 
 struct State {
@@ -77,9 +80,9 @@ struct State {
     camera: CameraState,
     algorithm_data: PipelineData,
     divide: bool,
-    num_iters: u32,
-    curr_iter: u32, // must be in [max(0, num_iters - NUM_ROLLBACK_FRAMES + 1), num_iters]
-    swapback: bool,
+    num_iters: i32,
+    curr_iter: i32, // must be in [max(0, num_iters - NUM_ROLLBACK_FRAMES + 1), num_iters]
+                    // swapback: bool,
 }
 
 impl State {
@@ -100,15 +103,6 @@ impl State {
             let semaphore_index = (self.frame_index % 3) as usize;
             let frame_fence_index = (self.frame_index % 3) as usize;
             let frame_cmdbuf_index = (self.frame_index % 3) as usize;
-
-            let cbt_scene_index = (self.curr_iter % NUM_ROLLBACK_FRAMES as u32) as usize;
-            let cbt_scene = &self.cbt_scenes[cbt_scene_index];
-            let buffer_handles = &cbt_scene.scene_buffer_handles;
-
-            let cbt_scene_index_swapback =
-                (self.curr_iter + 1 % NUM_ROLLBACK_FRAMES as u32) as usize;
-            let cbt_scene_swapback = &self.cbt_scenes[cbt_scene_index_swapback];
-            let buffer_handles_swapback = &cbt_scene_swapback.scene_buffer_handles;
 
             let cmdbuf = &self.draw_command_buffers[frame_cmdbuf_index];
 
@@ -188,23 +182,6 @@ impl State {
                 &[pre_barrier],
             );
 
-            let push_constants = PushConstants {
-                view_project: self.camera.projection_matrix() * self.camera.view_matrix(),
-                scene: cbt_scene.scene_buffer.device_address(),
-                dispatch: cbt_scene.dispatch_buffer.device_address(),
-                camera_position: Vec3A::from(self.camera.pos),
-                lookdir: Vec3A::from(self.camera.lookdir()),
-                // vertex_buffer: cbt_scene.vertex_buffer.device_address(),
-            };
-
-            // push constants
-            dev.cmd_push_constants(
-                *cmdbuf,
-                self.pipeline_layout,
-                vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::COMPUTE,
-                0,
-                byteslice(&push_constants),
-            );
             /*
             let memory_barrier = vk::MemoryBarrier::default()
                 .src_access_mask(vk::AccessFlags::SHADER_WRITE)
@@ -271,18 +248,41 @@ impl State {
             };
             // compute_write_compute_read_memory_barrier();
 
-            if self.divide {
-                // copy all buffers to swapback
-                if NUM_ROLLBACK_FRAMES > 1 {
-                    zip(
-                        buffer_handles.gpu_slices_iter(),
-                        buffer_handles_swapback.gpu_slices_iter(),
-                    )
-                    .for_each(|(curr, swap)| {
-                        let region = vk::BufferCopy::default().size(curr.size_in_bytes);
-                        dev.cmd_copy_buffer(*cmdbuf, curr.gpu_buffer, swap.gpu_buffer, &[region]);
-                    });
-                }
+            let rendered_scene = if self.divide {
+                // get a "mutable reference" to the correct scene
+                let cbt_scene = {
+                    // get prev and next scenes
+                    let prev_idx = self.num_iters % NUM_ROLLBACK_FRAMES as i32;
+                    let next_idx = (self.num_iters + 1) % NUM_ROLLBACK_FRAMES as i32;
+
+                    let prev_cbt_scene = &self.cbt_scenes[prev_idx as usize];
+                    let next_cbt_scene = &self.cbt_scenes[next_idx as usize];
+
+                    // copy data to start next scene
+                    if NUM_ROLLBACK_FRAMES > 1 {
+                        zip(
+                            prev_cbt_scene.scene_buffer_handles.gpu_slices_iter(),
+                            next_cbt_scene.scene_buffer_handles.gpu_slices_iter(),
+                        )
+                        .for_each(|(prev, next)| {
+                            let region = vk::BufferCopy::default().size(prev.size_in_bytes);
+                            dev.cmd_copy_buffer(
+                                *cmdbuf,
+                                prev.gpu_buffer,
+                                next.gpu_buffer,
+                                &[region],
+                            );
+                        });
+                    }
+                    next_cbt_scene
+                };
+                dev.cmd_push_constants(
+                    *cmdbuf,
+                    self.pipeline_layout,
+                    vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::COMPUTE,
+                    0,
+                    byteslice(&get_push_constants(cbt_scene, &self.camera)),
+                );
                 // COMPUTE
                 // classify
                 {
@@ -429,66 +429,81 @@ impl State {
                 // compute -> graphics global memory barrier AND indirect read
                 compute_write_graphics_read_memory_barrier();
                 compute_write_compute_read_memory_barrier();
-            }
+                cbt_scene
+            } else {
+                &self.cbt_scenes[self.curr_iter as usize % NUM_ROLLBACK_FRAMES]
+            };
             dev.cmd_begin_rendering(*cmdbuf, &rendering_info);
 
             // RENDERING CORE
-            dev.cmd_set_viewport(*cmdbuf, 0, &[viewport]);
-            dev.cmd_set_scissor(*cmdbuf, 0, &[scissor]);
-            dev.cmd_bind_pipeline(*cmdbuf, vk::PipelineBindPoint::GRAPHICS, self.pipeline);
-            dev.cmd_clear_attachments(
-                *cmdbuf,
-                &[
-                    vk::ClearAttachment::default()
-                        .aspect_mask(vk::ImageAspectFlags::COLOR)
-                        .clear_value(vk::ClearValue {
-                            color: vk::ClearColorValue {
-                                float32: [1.0, 0.0, 0.0, 1.0],
-                            },
-                        }),
-                    vk::ClearAttachment::default()
-                        .aspect_mask(vk::ImageAspectFlags::DEPTH)
-                        .clear_value(vk::ClearValue {
-                            depth_stencil: vk::ClearDepthStencilValue {
-                                depth: 0.0,
-                                stencil: 0,
-                            },
-                        }),
-                ],
-                &[
-                    vk::ClearRect::default()
-                        .rect(vk::Rect2D::default().extent(self.resolution))
-                        .base_array_layer(0)
-                        .layer_count(1),
-                    vk::ClearRect::default()
-                        .rect(vk::Rect2D::default().extent(self.resolution))
-                        .base_array_layer(0)
-                        .layer_count(1),
-                ],
-            );
+            {
+                // push constants
+                dev.cmd_push_constants(
+                    *cmdbuf,
+                    self.pipeline_layout,
+                    vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::COMPUTE,
+                    0,
+                    byteslice(&get_push_constants(rendered_scene, &self.camera)),
+                );
+                dev.cmd_set_viewport(*cmdbuf, 0, &[viewport]);
+                dev.cmd_set_scissor(*cmdbuf, 0, &[scissor]);
+                dev.cmd_bind_pipeline(*cmdbuf, vk::PipelineBindPoint::GRAPHICS, self.pipeline);
+                dev.cmd_clear_attachments(
+                    *cmdbuf,
+                    &[
+                        vk::ClearAttachment::default()
+                            .aspect_mask(vk::ImageAspectFlags::COLOR)
+                            .clear_value(vk::ClearValue {
+                                color: vk::ClearColorValue {
+                                    float32: [1.0, 0.0, 0.0, 1.0],
+                                },
+                            }),
+                        vk::ClearAttachment::default()
+                            .aspect_mask(vk::ImageAspectFlags::DEPTH)
+                            .clear_value(vk::ClearValue {
+                                depth_stencil: vk::ClearDepthStencilValue {
+                                    depth: 0.0,
+                                    stencil: 0,
+                                },
+                            }),
+                    ],
+                    &[
+                        vk::ClearRect::default()
+                            .rect(vk::Rect2D::default().extent(self.resolution))
+                            .base_array_layer(0)
+                            .layer_count(1),
+                        vk::ClearRect::default()
+                            .rect(vk::Rect2D::default().extent(self.resolution))
+                            .base_array_layer(0)
+                            .layer_count(1),
+                    ],
+                );
 
-            // draw the triangles
-            dev.cmd_draw_indirect(
-                *cmdbuf,
-                cbt_scene.dispatch_buffer.buffer(),
-                offset_of!(DispatchDataGPU, draw_indirect_command) as u64,
-                1,
-                0,
-            );
-            // draw the wireframe
-            dev.cmd_bind_pipeline(*cmdbuf, vk::PipelineBindPoint::GRAPHICS, self.wire_pipeline);
-            dev.cmd_draw_indirect(
-                *cmdbuf,
-                cbt_scene.dispatch_buffer.buffer(),
-                offset_of!(DispatchDataGPU, draw_indirect_command) as u64,
-                1,
-                0,
-            );
+                // draw the triangles
+                dev.cmd_draw_indirect(
+                    *cmdbuf,
+                    rendered_scene.dispatch_buffer.buffer(),
+                    offset_of!(DispatchDataGPU, draw_indirect_command) as u64,
+                    1,
+                    0,
+                );
+                // draw the wireframe
+                dev.cmd_bind_pipeline(*cmdbuf, vk::PipelineBindPoint::GRAPHICS, self.wire_pipeline);
+                dev.cmd_draw_indirect(
+                    *cmdbuf,
+                    rendered_scene.dispatch_buffer.buffer(),
+                    offset_of!(DispatchDataGPU, draw_indirect_command) as u64,
+                    1,
+                    0,
+                );
 
-            dev.cmd_end_rendering(*cmdbuf);
+                dev.cmd_end_rendering(*cmdbuf);
+            }
 
+            // POST RENDERING
             if self.divide {
                 self.num_iters += 1;
+                self.curr_iter += 1;
                 println!("num_iters: {:?}", self.num_iters);
 
                 dev.cmd_bind_pipeline(
@@ -498,7 +513,7 @@ impl State {
                 );
                 dev.cmd_dispatch_indirect(
                     *cmdbuf,
-                    cbt_scene.dispatch_buffer.buffer(),
+                    rendered_scene.dispatch_buffer.buffer(),
                     offset_of!(DispatchDataGPU, dispatch_vertex_compute_command) as u64,
                 );
                 compute_write_compute_read_memory_barrier();
@@ -604,20 +619,10 @@ impl State {
                     dev.device_wait_idle().expect("wait idle")
                 }
 
-                // let sleep_time = time::Duration::from_millis(30);
-                // thread::sleep(sleep_time);
-                // let scene = self.scene_buffer.mapped_slice()[0];
-                let dispatch = cbt_scene.dispatch_buffer.mapped_slice()[0];
-                let curr_id = dispatch.debug_data.curr_id;
-
-                if curr_id != 0 {
-                    println!("Debug Data: {:?}", dispatch.debug_data);
-                    panic!("AHA");
-                }
                 self.frame_index += 1;
-                self.divide = false;
             }
         }
+        self.divide = false;
     }
 }
 
@@ -1615,7 +1620,7 @@ impl ApplicationHandler for App {
                 algorithm_data: algorithm_data,
                 divide: false,
                 num_iters: 0,
-                swapback: false,
+                // swapback: false,
                 pipeline_handles: pipeline_handles,
                 cbt_scenes: cbt_scenes,
                 curr_iter: 0,
@@ -1704,13 +1709,25 @@ impl ApplicationHandler for App {
                     // println!("Camera Position: {:?}", state.camera.pos);
                 }
                 Key::Character("r") => {
-                    if state.swapback == false {
+                    if state.curr_iter == state.num_iters {
                         state.divide = true;
+                    } else {
+                        println!("viewing wrong iteration");
                     }
                 }
-                Key::Character("t") => {
-                    state.swapback = !state.swapback;
-                    println!("swapback: {:?}", state.swapback)
+                Key::Character("j") => {
+                    state.curr_iter = max(
+                        0,
+                        max(
+                            state.num_iters - NUM_ROLLBACK_FRAMES as i32 + 1,
+                            state.curr_iter - 1,
+                        ),
+                    );
+                    println!("curr_iter: {:?}", state.curr_iter);
+                }
+                Key::Character("k") => {
+                    state.curr_iter = min(state.num_iters, state.curr_iter + 1);
+                    println!("curr_iter: {:?}", state.curr_iter);
                 }
                 Key::Character("f") => unsafe {
                     /*

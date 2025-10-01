@@ -598,25 +598,27 @@ Is there an easy way to swap between single and multi buffering?
 ```
 WAIT IM STUPID
 ```odin
+// BisectorData is a smallish struct holding array pointers but is >16 bytes
 bisector_data : [NUM_STORED]BisectorData
 bisector_data[0] = initialize_bisector_data()
-num_iters := 0
+num_iters := 0 // number of iterations that have been COMPLETED
+curr_iter := 0 // which iter to render
 for {
-    advance_iter := process_input()
+    advance_iter := process_input(&curr_iter) or_break
     if (advance_iter) {
-        curr := &bisector_data[num_iters]
-        num_iters = (num_iters + 1) % NUM_STORED
-        bisector_data[num_iters] = compute_next_iter()
+        prev_idx := num_iters % NUM_STORED
+        next_idx := (num_iters + 1) % NUM_STORED
+        defer {
+            num_iters = next_idx
+            curr_iter = next_idx
+        }
+
+        prev_bisectors := &bisector_data[prev_idx]
+        next_bisectors := &bisector_data[next_idx]
+        bisector_deep_copy(src=prev_bisectors, dst=next_bisectors)
+        compute_next_iter_in_place(next_bisectors)
     }
+    render(bisector_data[curr_iter])
 }
-
-}
-
-
-
 ```
-<<<<<<< HEAD
-
-```
-=======
->>>>>>> e0c0d4f (swapback storage expanded)
+GOD I LOVE ODIN
