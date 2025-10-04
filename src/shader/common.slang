@@ -90,15 +90,24 @@ struct DispatchData
     DebugData debug_data;
 }
 
+enum RenderingMode : uint32_t {
+    DEFAULT,
+    ROLLBACK_DEFAULT,
+    DBG_WANT_SPLIT,
+}
+
 struct PushConstant
 {
     float4x4 view_project;
-    SceneData *scene;
-    DispatchData *dispatch;
+    SceneData *scene_prev;
+    SceneData *scene_next;
+    DispatchData *dispatch_prev;
+    DispatchData *dispatch_next;
     float3 cam_pos;
     uint8_t pad0;
 
     float3 lookdir;
+<<<<<<< HEAD
     uint8_t pad1;
 
     uint swapback;
@@ -109,6 +118,9 @@ struct SwapbackData
     float3 vertex_position[3];
     uint split_command;
     uint8_t want_split; // 0 for false, 1 for true
+=======
+    RenderingMode rendering_mode;
+>>>>>>> aba2c23 (reference data from multiple scenes)
 }
 
 static const uint WORKGROUP_SIZE = 64;
@@ -144,7 +156,7 @@ enum TriState : int
 }
 
 [[vk::push_constant]]
-ConstantBuffer<PushConstant> pc;
+ConstantBuffer<PushConstant, ScalarDataLayout> pc;
 
 uint heap_id_depth(uint heapid)
 {
@@ -170,7 +182,7 @@ uint find_edge_type(uint curr_id, uint3 neighbor_neighbors)
     {
         if (neighbor_neighbors[TWIN] != curr_id)
         {
-            pc.dispatch.debug_data.curr_heapid.compareExchange(0, curr_id);
+            pc.dispatch_next.debug_data.curr_heapid.compareExchange(0, curr_id);
         }
         return TWIN;
     }

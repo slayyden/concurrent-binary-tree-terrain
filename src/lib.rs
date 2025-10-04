@@ -1313,21 +1313,31 @@ pub struct CBTScene {
 #[derive(Debug)]
 pub struct PushConstants {
     view_project: Mat4,
-
-    scene: vk::DeviceAddress,
-    dispatch: vk::DeviceAddress,
-
-    camera_position: Vec3A,
-    lookdir: Vec3A,
+    scene_prev: vk::DeviceAddress,
+    scene_next: vk::DeviceAddress,
+    dispatch_prev: vk::DeviceAddress,
+    dispatch_next: vk::DeviceAddress,
+    camera_position: Vec3,
+    lookdir: Vec3,
+    rendering_mode: RenderingMode,
 }
 
-pub fn get_push_constants(cbt_scene: &CBTScene, camera: &CameraState) -> PushConstants {
+pub fn get_push_constants(
+    prev_scene: &CBTScene,
+    next_scene: &CBTScene,
+    camera: &CameraState,
+    rendering_mode: RenderingMode,
+) -> PushConstants {
+    // prev and next scene MAY alias
     PushConstants {
         view_project: camera.projection_matrix() * camera.view_matrix(),
-        scene: cbt_scene.scene_buffer.device_address(),
-        dispatch: cbt_scene.dispatch_buffer.device_address(),
-        camera_position: Vec3A::from(camera.pos),
-        lookdir: Vec3A::from(camera.lookdir()),
+        scene_prev: prev_scene.scene_buffer.device_address(),
+        dispatch_prev: prev_scene.dispatch_buffer.device_address(),
+        scene_next: next_scene.scene_buffer.device_address(),
+        dispatch_next: next_scene.dispatch_buffer.device_address(),
+        camera_position: Vec3::from(camera.pos),
+        lookdir: Vec3::from(camera.lookdir()),
+        rendering_mode: rendering_mode,
     }
 }
 
@@ -1698,6 +1708,14 @@ impl CameraState {
             Vec4::new(0.0, 0.0, self.near, 0.0),
         )
     }
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub enum RenderingMode {
+    Default,
+    RollbackDefault,
+    DebugWantSplit,
 }
 
 #[cfg(test)]

@@ -82,7 +82,7 @@ struct State {
     divide: bool,
     num_iters: i32,
     curr_iter: i32, // must be in [max(0, num_iters - NUM_ROLLBACK_FRAMES + 1), num_iters]
-                    // swapback: bool,
+    rendering_mode: RenderingMode,
 }
 
 impl State {
@@ -248,9 +248,9 @@ impl State {
             };
             // compute_write_compute_read_memory_barrier();
 
-            let rendered_scene = if self.divide {
+            let (prev_scene, next_scene, rendering_mode) = if self.divide {
                 // get a "mutable reference" to the correct scene
-                let cbt_scene = {
+                let (prev_scene, next_scene) = {
                     // get prev and next scenes
                     let prev_idx = self.num_iters % NUM_ROLLBACK_FRAMES as i32;
                     let next_idx = (self.num_iters + 1) % NUM_ROLLBACK_FRAMES as i32;
@@ -274,14 +274,19 @@ impl State {
                             );
                         });
                     }
-                    next_cbt_scene
+                    (prev_cbt_scene, next_cbt_scene)
                 };
                 dev.cmd_push_constants(
                     *cmdbuf,
                     self.pipeline_layout,
                     vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::COMPUTE,
                     0,
-                    byteslice(&get_push_constants(cbt_scene, &self.camera)),
+                    byteslice(&get_push_constants(
+                        prev_scene,
+                        next_scene,
+                        &self.camera,
+                        RenderingMode::Default, // compute doesn't care about rendering mode
+                    )),
                 );
                 // COMPUTE
                 // classify
@@ -294,7 +299,7 @@ impl State {
 
                     dev.cmd_dispatch_indirect(
                         *cmdbuf,
-                        cbt_scene.dispatch_buffer.buffer(),
+                        next_scene.dispatch_buffer.buffer(),
                         offset_of!(DispatchDataGPU, dispatch_vertex_compute_command) as u64,
                     );
                 }
@@ -322,7 +327,7 @@ impl State {
                     );
                     dev.cmd_dispatch_indirect(
                         *cmdbuf,
-                        cbt_scene.dispatch_buffer.buffer(),
+                        next_scene.dispatch_buffer.buffer(),
                         offset_of!(DispatchDataGPU, dispatch_split_command) as u64,
                     );
                 }
@@ -348,7 +353,7 @@ impl State {
                 );
                 dev.cmd_dispatch_indirect(
                     *cmdbuf,
-                    cbt_scene.dispatch_buffer.buffer(),
+                    next_scene.dispatch_buffer.buffer(),
                     offset_of!(DispatchDataGPU, dispatch_allocate_command) as u64,
                 );
                 compute_write_compute_read_memory_barrier();
@@ -362,7 +367,7 @@ impl State {
                 );
                 dev.cmd_dispatch_indirect(
                     *cmdbuf,
-                    cbt_scene.dispatch_buffer.buffer(),
+                    next_scene.dispatch_buffer.buffer(),
                     offset_of!(DispatchDataGPU, dispatch_allocate_command) as u64,
                 );
                 compute_write_compute_read_memory_barrier();
@@ -385,7 +390,7 @@ impl State {
                 );
                 dev.cmd_dispatch_indirect(
                     *cmdbuf,
-                    cbt_scene.dispatch_buffer.buffer(),
+                    next_scene.dispatch_buffer.buffer(),
                     offset_of!(DispatchDataGPU, dispatch_prepare_merge_command) as u64,
                 );
                 compute_write_compute_read_memory_barrier();
@@ -399,7 +404,7 @@ impl State {
                 );
                 dev.cmd_dispatch_indirect(
                     *cmdbuf,
-                    cbt_scene.dispatch_buffer.buffer(),
+                    next_scene.dispatch_buffer.buffer(),
                     offset_of!(DispatchDataGPU, dispatch_prepare_merge_command) as u64,
                 );
                 compute_write_compute_read_memory_barrier();
@@ -423,15 +428,28 @@ impl State {
                 );
                 dev.cmd_dispatch_indirect(
                     *cmdbuf,
-                    cbt_scene.dispatch_buffer.buffer(),
+                    next_scene.dispatch_buffer.buffer(),
                     offset_of!(DispatchDataGPU, dispatch_vertex_compute_command) as u64,
                 );
                 // compute -> graphics global memory barrier AND indirect read
                 compute_write_graphics_read_memory_barrier();
                 compute_write_compute_read_memory_barrier();
-                cbt_scene
+                (prev_scene, next_scene, RenderingMode::Default)
             } else {
-                &self.cbt_scenes[self.curr_iter as usize % NUM_ROLLBACK_FRAMES]
+                if self.curr_iter == self.num_iters {
+                    (
+                        &self.cbt_scenes[(self.num_iters as usize + NUM_ROLLBACK_FRAMES - 1)
+                            % NUM_ROLLBACK_FRAMES],
+                        &self.cbt_scenes[self.num_iters as usize % NUM_ROLLBACK_FRAMES],
+                        RenderingMode::Default,
+                    )
+                } else {
+                    (
+                        &self.cbt_scenes[self.curr_iter as usize % NUM_ROLLBACK_FRAMES],
+                        &self.cbt_scenes[(self.curr_iter as usize + 1) % NUM_ROLLBACK_FRAMES],
+                        RenderingMode::RollbackDefault,
+                    )
+                }
             };
             dev.cmd_begin_rendering(*cmdbuf, &rendering_info);
 
@@ -443,7 +461,12 @@ impl State {
                     self.pipeline_layout,
                     vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::COMPUTE,
                     0,
-                    byteslice(&get_push_constants(rendered_scene, &self.camera)),
+                    byteslice(&get_push_constants(
+                        prev_scene,
+                        next_scene,
+                        &self.camera,
+                        rendering_mode,
+                    )),
                 );
                 dev.cmd_set_viewport(*cmdbuf, 0, &[viewport]);
                 dev.cmd_set_scissor(*cmdbuf, 0, &[scissor]);
@@ -479,10 +502,16 @@ impl State {
                     ],
                 );
 
+                let vertices_scene = if self.num_iters == self.curr_iter {
+                    next_scene
+                } else {
+                    prev_scene
+                };
+
                 // draw the triangles
                 dev.cmd_draw_indirect(
                     *cmdbuf,
-                    rendered_scene.dispatch_buffer.buffer(),
+                    vertices_scene.dispatch_buffer.buffer(),
                     offset_of!(DispatchDataGPU, draw_indirect_command) as u64,
                     1,
                     0,
@@ -491,7 +520,7 @@ impl State {
                 dev.cmd_bind_pipeline(*cmdbuf, vk::PipelineBindPoint::GRAPHICS, self.wire_pipeline);
                 dev.cmd_draw_indirect(
                     *cmdbuf,
-                    rendered_scene.dispatch_buffer.buffer(),
+                    vertices_scene.dispatch_buffer.buffer(),
                     offset_of!(DispatchDataGPU, draw_indirect_command) as u64,
                     1,
                     0,
@@ -513,7 +542,7 @@ impl State {
                 );
                 dev.cmd_dispatch_indirect(
                     *cmdbuf,
-                    rendered_scene.dispatch_buffer.buffer(),
+                    next_scene.dispatch_buffer.buffer(),
                     offset_of!(DispatchDataGPU, dispatch_vertex_compute_command) as u64,
                 );
                 compute_write_compute_read_memory_barrier();
@@ -1602,6 +1631,7 @@ impl ApplicationHandler for App {
                 resolution: surface_resolution,
                 command_reuse_fences: command_reuse_fences,
                 frame_pace_semaphore: frame_pace_semaphore,
+                rendering_mode: RenderingMode::Default,
 
                 // algorithm_data: algorithm_data,
                 // setup_commands_reuse_fence: setup_commands_reuse_fence,

@@ -39,7 +39,7 @@ void reset(uint3 tid: SV_DispatchThreadID)
     {
         return;
     }
-    let dispatch = pc.dispatch;
+    let dispatch = pc.dispatch_next;
     dispatch.allocation_counter.store(0);
     dispatch.want_split_buffer_count.store(0);
     dispatch.splitting_buffer_count.store(0);

@@ -12,7 +12,7 @@ struct v2p
 [shader("vertex")]
 v2p vertexMain(uint vid: SV_VertexID)
 {
-    let vertex_buffer = pc.scene.vertex_buffer;
+    let vertex_buffer = (pc.rendering_mode == RenderingMode::DEFAULT) ? pc.scene_next.vertex_buffer : pc.scene_prev.vertex_buffer;
     const float3 colors[3] = float3[3](
         float3(1.0f, 0.0f, 0.0f), // red
         float3(0.0f, 1.0f, 0.0f), // green
@@ -25,8 +25,8 @@ v2p vertexMain(uint vid: SV_VertexID)
     float4 pos = float4(get_vertex_buffer(pc, vid), 1);
     pos = mul(pos, pc.view_project);
 
-    let curr_id = pc.scene.curr_id_buffer[vid / 3];
-    let neighbors = pc.scene.neighbors_buffer[curr_id];
+    let curr_id = pc.scene_next.curr_id_buffer[vid / 3];
+    let neighbors = pc.scene_next.neighbors_buffer[curr_id];
     var num_valid_neighbors = 0;
     for (int i = 0; i < 3; ++i)
     {
@@ -40,7 +40,7 @@ v2p vertexMain(uint vid: SV_VertexID)
     // output.sv_position = mul(pos, pc.view_project);
     output.sv_position = pos;
     output.color = color;
-    output.bisector_id = pc.scene.curr_id_buffer[vid / 3];
+    output.bisector_id = pc.scene_next.curr_id_buffer[vid / 3];
     output.num_valid_neighbors = num_valid_neighbors;
 
     return output;

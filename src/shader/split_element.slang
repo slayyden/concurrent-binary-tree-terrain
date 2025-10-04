@@ -4,18 +4,18 @@
 [numthreads(WORKGROUP_SIZE, 1, 1)]
 void split_element(uint3 tid: SV_DispatchThreadID)
 {
-    if (tid.x >= pc.dispatch.want_split_buffer_count.load())
+    if (tid.x >= pc.dispatch_next.want_split_buffer_count.load())
     {
         return;
     }
-    var curr_id = pc.scene.want_split_buffer[tid.x];
-    let neighbors_buffer = pc.scene.neighbors_buffer;
-    let base_depth = pc.scene.base_depth;
+    var curr_id = pc.scene_next.want_split_buffer[tid.x];
+    let neighbors_buffer = pc.scene_next.neighbors_buffer;
+    let base_depth = pc.scene_next.base_depth;
     uint3 curr_neighbors = neighbors_buffer[curr_id];
-    let splitting_buffer = pc.scene.splitting_buffer;
-    let heapid_buffer = pc.scene.heapid_buffer;
-    let bisector_command_buffer = pc.scene.bisector_split_command_buffer;
-    let bisector_state_buffer = pc.scene.bisector_state_buffer;
+    let splitting_buffer = pc.scene_next.splitting_buffer;
+    let heapid_buffer = pc.scene_next.heapid_buffer;
+    let bisector_command_buffer = pc.scene_next.bisector_split_command_buffer;
+    let bisector_state_buffer = pc.scene_next.bisector_state_buffer;
 
     // check if the next neighbor is gonna split us anyway
     uint next = curr_neighbors[NEXT];
@@ -47,10 +47,10 @@ void split_element(uint3 tid: SV_DispatchThreadID)
     int max_required_memory = (twin_id == INVALID_INDEX)                     ? 2                                     // boundary
                               : (neighbors_buffer[twin_id][TWIN] == curr_id) ? 4                                     // perfect matching
                                                                              : 3 * (current_depth - base_depth) + 2; // triple split for each entry in compatibility chain
-    int remaining_memory = pc.dispatch.remaining_memory_count.add(-max_required_memory);
+    int remaining_memory = pc.dispatch_next.remaining_memory_count.add(-max_required_memory);
     if (remaining_memory < max_required_memory)
     {
-        pc.dispatch.remaining_memory_count.add(max_required_memory); // undo subtraction
+        pc.dispatch_next.remaining_memory_count.add(max_required_memory); // undo subtraction
         return;
     }
 
@@ -58,13 +58,13 @@ void split_element(uint3 tid: SV_DispatchThreadID)
     uint base_pattern = bisector_command_buffer[curr_id].or(CENTER_SPLIT);
     if (base_pattern != NO_SPLIT)
     {
-        pc.dispatch.remaining_memory_count.add(max_required_memory);
+        pc.dispatch_next.remaining_memory_count.add(max_required_memory);
         return;
     }
 
     // good to split. start by splitting this bisector
     int used_memory = 2; // one for each split child
-    uint target_location = pc.dispatch.splitting_buffer_count.add(1);
+    uint target_location = pc.dispatch_next.splitting_buffer_count.add(1);
     splitting_buffer[target_location] = curr_id;
 
     // iterate over compabibility chain
@@ -88,7 +88,7 @@ void split_element(uint3 tid: SV_DispatchThreadID)
             // if not, add to splitting buffer and claim memory
             if (twin_prev_command == NO_SPLIT)
             {
-                uint alloc_loc = pc.dispatch.splitting_buffer_count.add(1);
+                uint alloc_loc = pc.dispatch_next.splitting_buffer_count.add(1);
                 splitting_buffer[alloc_loc] = twin_id;
                 used_memory += 2;
             }
@@ -114,7 +114,7 @@ void split_element(uint3 tid: SV_DispatchThreadID)
             // to handle its compatibility chain
             else
             {
-                uint alloc_loc = pc.dispatch.splitting_buffer_count.add(1);
+                uint alloc_loc = pc.dispatch_next.splitting_buffer_count.add(1);
                 splitting_buffer[alloc_loc] = twin_id;
                 used_memory += 3;
 
@@ -125,6 +125,6 @@ void split_element(uint3 tid: SV_DispatchThreadID)
         }
 
         // return unclaimed memory
-        pc.dispatch.remaining_memory_count.add(max_required_memory - used_memory);
+        pc.dispatch_next.remaining_memory_count.add(max_required_memory - used_memory);
     }
 }
