@@ -604,3 +604,165 @@ for {
 }
 ```
 GOD I LOVE ODIN
+
+Okay so we want to view at some data from the previous generation of bisectors
+- which bisectors wanna split?
+
+```
+bisectors[0].want_split
+bisectors[0].vertices <----
+                          | is only valid with this data
+                          |
+bisectors[1].want_split---|
+bisectors[1].vertices
+```
+implementation options:
+- pass in a future pointer (may be invalid)
+- pass in a past pointer (almost never invalid)
+- implement a ring buffer
+
+```odin
+// ring buffer
+CBTScene :: struct {...}
+Scenes :: [NUM_STORED]CBTScene
+SceneRefs :: [NUM_STORED]^CBTScene
+scenes : Buffer(Scenes) = allocate_buffer(Scenes)
+scene_refs : Buffer(SceneRefs) = allocate_buffer(SceneRefs)
+
+for scene, i in scenes {
+    scene_refs[i] = get_buffer_address(scene)
+}
+```
+
+hmmm there seems to be two different notions here:
+- data required to construct the vertices/cbt/neighbors of a bisector generation
+- data derived from the vertices/cbt/neighbors of a bisector generation
+
+```odin
+BisectorData :: struct {
+    vertices : [3]f32
+    neighbors : [3]u32
+    heapid : HeapID
+}
+BisectorCBT :: struct {
+    interior : ..
+    leaves : ..
+    bisectors : #soa[MAX_BISECTORS]BisectorData
+}
+BisectorClassifications {
+   want_split : #dyanamic[]u32
+   splitting: #dyanamic[]u32
+   want_merge: #dyanamic[]u32
+   merging : #dynamic[]u32
+}
+BisectorIterationState :: struct {
+    command : u32,
+    allocation_indices : [4]u32
+}
+BisectorIterationData {
+    state : #soa[MAX_BISECTORS]BisectorIterationState
+    classifications : BisectorClassifications
+}
+
+iteration_data : [NUM_STORED]BisectorIterationData
+bisector_data : [NUM_STORED]BisectorCBT
+
+bisector_data[0] = initialize_bisector_data()
+num_iters := 0 // number of iterations that have been COMPLETED
+curr_iter := 0 // which iter to render
+for {
+    advance_iter := process_input(&curr_iter) or_break
+    if (advance_iter) {
+        prev_idx := num_iters % NUM_STORED
+        next_idx := (num_iters + 1) % NUM_STORED
+        defer {
+            num_iters = next_idx
+            curr_iter = next_idx
+        }
+
+        prev_bisectors := &bisector_data[prev_idx]
+        next_bisectors := &bisector_data[next_idx]
+        next_iterdata := reset_iter_data(&iteration_data[next_idx])
+        if NUM_STORED > 1 do bisector_deep_copy(src=prev_bisectors, dst=next_bisectors)
+        // wait what happens to neighbors?
+        // fuck
+        compute_next_iterdata(next_iterdata, next_bisectors^)
+        compute_next_iter_in_place(next_bisectors, next_iterdata^)
+    }
+    render(bisector_data[curr_iter])
+}
+```
+ok nevermind
+it seems difficult to disentangle "stable" and "unstable" data in the pipeline
+the update pointers method happens in the middle, requiring changing the neighbors
+then, we only need to mutate next_iterdata for deciding what to merge
+then, we update `next_bisectors` mutably again
+what if we separate splitting and merging queues
+- that makes data very "fine" in granularity
+
+```odin
+prev_bisectors := &bisector_data[prev_idx]
+next_bisectors := &bisector_data[next_idx]
+if NUM_STORED > 1 do bisector_deep_copy(src=prev_bisectors, dst=next_bisectors)
+command_iterdata := command_iterdata(next_bisectors)
+split_iterdata := split_iterdata(next_bisectors)
+split_bisectors(&next_bisectors, split_iterdata)
+merge_iterdata := merge_iterdata(next_bisectors)
+merge_bisectors(&next_bisectors, merge_iterdata)
+cbt_reduce(&next_bisectors)
+```
+this shit is too complicated
+we have a record anyway, let's just point to it
+this only matters when rendering
+
+```odin
+RenderingMode :: enum {
+    DEFAULT,
+    DEBUG_WANT_SPLIT,
+}
+// BisectorData is a smallish struct holding array pointers but is >16 bytes
+bisector_data : [NUM_STORED]BisectorData
+bisector_data[0] = initialize_bisector_data()
+num_iters := 0 // number of iterations that have been COMPLETED
+curr_iter := 0 // which iter to render
+for {
+    advance_iter, rendering_mode := process_input(&curr_iter) or_break
+    if NUM_STORED == 1 do rendering_mode = .DEFAULT
+    if (advance_iter) {
+        prev_idx := num_iters % NUM_STORED
+        next_idx := (num_iters + 1) % NUM_STORED
+        defer {
+            num_iters = next_idx
+            curr_iter = next_idx
+        }
+
+        prev_bisectors := &bisector_data[prev_idx]
+        next_bisectors := &bisector_data[next_idx]
+        bisector_deep_copy(src=prev_bisectors, dst=next_bisectors)
+        compute_next_iter_in_place(next_bisectors)
+    }
+    prev_iter := max(0, curr_iter - 1) % NUM_STORED
+    render(bisector_data[curr_iter], bisector_data[prev_iter], rendering_mode)
+}
+```
+we're out of push constants
+okay
+it's time for uniform buffers
+jk no we're not
+now the pc buffer is full
+
+i think we can simplify this further
+there is a specific field that we need to display
+only one im pretty sure
+so what if we pass that in as a pointer?
+alternatively, we pass in the old vertex buffer as a pointer
+- this is more likely to be valid
+- also would need a pointer to the old curr_id buffer and old dispatch buffer for the correct draw call
+
+# Scalar Layout vs C Layout
+Very similar
+| Scalar | C |
+| Scalars of size N have alignment N | Scalars of size N<=16 typically have alignment N on 64-bit systems but this is not spec-garaunteed |
+| Matrices have the alignment of their elements | Matrices in common LA libraries are 16-byte aligned for SIMD |
+
+WARNING: Matrices in LA libraries and matrices in Slang have the same in-memory representation, but may have DIFFERENT alignment.

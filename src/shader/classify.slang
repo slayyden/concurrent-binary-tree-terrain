@@ -50,7 +50,7 @@ TriState classify_triangle(float3[3] verts, uint heapid)
     }
     return TriState::UNCHANGED_ELEMENT;
 
-    if (area < 0.001 && heap_id_depth(heapid) != pc.scene.base_depth)
+    if (area < 0.001 && heap_id_depth(heapid) != pc.scene_next.base_depth)
     {
         return TriState::SIMPLIFY_ELEMENT;
     }
@@ -60,20 +60,20 @@ TriState classify_triangle(float3[3] verts, uint heapid)
 [numthreads(64, 1, 1)]
 void classify(uint3 tid: SV_DispatchThreadID)
 {
-    let vertex_buffer = pc.scene.vertex_buffer;
-    if (tid.x >= pc.scene.cbt_interior[0])
+    let vertex_buffer = pc.scene_next.vertex_buffer;
+    if (tid.x >= pc.scene_next.cbt_interior[0])
     {
         return;
     }
 
     // let curr_id = one_bit_to_id(tid.x);
-    let curr_id = pc.scene.curr_id_buffer[tid.x];
-    let heap_id = pc.scene.heapid_buffer[curr_id];
+    let curr_id = pc.scene_next.curr_id_buffer[tid.x];
+    let heap_id = pc.scene_next.heapid_buffer[curr_id];
     // Reset some values
-    // pc.scene.currid_buffer[tid.x] = curr_id;
-    pc.scene.bisector_split_command_buffer[curr_id].store(NO_SPLIT);
-    pc.scene.allocation_indices_buffer[curr_id] = uint4(INVALID_INDEX);
-    // pc.scene.bisector_state_buffer[curr_id] = TriState::;
+    // pc.scene_next.currid_buffer[tid.x] = curr_id;
+    pc.scene_next.bisector_split_command_buffer[curr_id].store(NO_SPLIT);
+    pc.scene_next.allocation_indices_buffer[curr_id] = uint4(INVALID_INDEX);
+    // pc.scene_next.bisector_state_buffer[curr_id] = TriState::;
 
     float3 verts[3] = {
         vertex_buffer[curr_id * 3],
@@ -82,16 +82,16 @@ void classify(uint3 tid: SV_DispatchThreadID)
     };
 
     let state = classify_triangle(verts, heap_id);
-    pc.scene.bisector_state_buffer[curr_id] = state;
+    pc.scene_next.bisector_state_buffer[curr_id] = state;
 
     if (state == TriState::BISECT_ELEMENT)
     {
-        let bisector_slot = pc.dispatch.want_split_buffer_count.add(1);
-        pc.scene.want_split_buffer[bisector_slot] = curr_id;
+        let bisector_slot = pc.dispatch_next.want_split_buffer_count.add(1);
+        pc.scene_next.want_split_buffer[bisector_slot] = curr_id;
     }
     else if (state == TriState::SIMPLIFY_ELEMENT && heap_id % 2 == 1)
     {
-        let bisector_slot = pc.dispatch.want_merge_buffer_count.add(1);
-        pc.scene.want_merge_buffer[bisector_slot] = curr_id;
+        let bisector_slot = pc.dispatch_next.want_merge_buffer_count.add(1);
+        pc.scene_next.want_merge_buffer[bisector_slot] = curr_id;
     }
 }

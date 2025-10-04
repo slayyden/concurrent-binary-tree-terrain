@@ -3,8 +3,8 @@
 
 uint one_bit_to_id(uint index)
 {
-    let interior = pc.scene.cbt_interior;
-    let leaves = pc.scene.cbt_leaves;
+    let interior = pc.scene_next.cbt_interior;
+    let leaves = pc.scene_next.cbt_leaves;
     if (index >= interior[0])
     {
         return INVALID_INDEX;
@@ -64,8 +64,8 @@ uint zero_bit_to_id(
     uint index, // index of the bit in the bitfield
 )
 {
-    let interior = pc.scene.cbt_interior;
-    let leaves = pc.scene.cbt_leaves;
+    let interior = pc.scene_next.cbt_interior;
+    let leaves = pc.scene_next.cbt_leaves;
     var cap : uint = 1 << 17;
     if (index >= cap - interior[0])
     {
@@ -120,8 +120,8 @@ uint zero_bit_to_id(
 
 void set_bit(uint index)
 {
-    // let leaves = pc.scene.cbt_leaves;
-    let leaves = pc.scene.cbt_leaves;
+    // let leaves = pc.scene_next.cbt_leaves;
+    let leaves = pc.scene_next.cbt_leaves;
     uint leaf_idx = index / BITFIELD_INT_SIZE;
     uint bit_idx = index % BITFIELD_INT_SIZE;
 
@@ -131,8 +131,8 @@ void set_bit(uint index)
 
 void unset_bit(uint index)
 {
-    // let leaves = pc.scene.cbt_leaves;
-    let leaves = pc.scene.cbt_leaves;
+    // let leaves = pc.scene_next.cbt_leaves;
+    let leaves = pc.scene_next.cbt_leaves;
     uint leaf_idx = index / BITFIELD_INT_SIZE;
     uint bit_idx = index % BITFIELD_INT_SIZE;
 
