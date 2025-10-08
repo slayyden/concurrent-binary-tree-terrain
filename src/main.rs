@@ -279,7 +279,9 @@ impl State {
                 dev.cmd_push_constants(
                     *cmdbuf,
                     self.pipeline_layout,
-                    vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::COMPUTE,
+                    vk::ShaderStageFlags::VERTEX
+                        | vk::ShaderStageFlags::FRAGMENT
+                        | vk::ShaderStageFlags::COMPUTE,
                     0,
                     byteslice(&get_push_constants(
                         prev_scene,
@@ -447,7 +449,10 @@ impl State {
                     (
                         &self.cbt_scenes[self.curr_iter as usize % NUM_ROLLBACK_FRAMES],
                         &self.cbt_scenes[(self.curr_iter as usize + 1) % NUM_ROLLBACK_FRAMES],
-                        RenderingMode::RollbackDefault,
+                        match self.rendering_mode {
+                            RenderingMode::Default => RenderingMode::RollbackDefault,
+                            _ => self.rendering_mode,
+                        },
                     )
                 }
             };
@@ -455,19 +460,6 @@ impl State {
 
             // RENDERING CORE
             {
-                // push constants
-                dev.cmd_push_constants(
-                    *cmdbuf,
-                    self.pipeline_layout,
-                    vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::COMPUTE,
-                    0,
-                    byteslice(&get_push_constants(
-                        prev_scene,
-                        next_scene,
-                        &self.camera,
-                        rendering_mode,
-                    )),
-                );
                 dev.cmd_set_viewport(*cmdbuf, 0, &[viewport]);
                 dev.cmd_set_scissor(*cmdbuf, 0, &[scissor]);
                 dev.cmd_bind_pipeline(*cmdbuf, vk::PipelineBindPoint::GRAPHICS, self.pipeline);
@@ -508,6 +500,20 @@ impl State {
                     prev_scene
                 };
 
+                let push_constants =
+                    get_push_constants(prev_scene, next_scene, &self.camera, rendering_mode);
+                let push_constant_bytes = byteslice(&push_constants);
+                // push constants
+                dev.cmd_push_constants(
+                    *cmdbuf,
+                    self.pipeline_layout,
+                    vk::ShaderStageFlags::VERTEX
+                        | vk::ShaderStageFlags::FRAGMENT
+                        | vk::ShaderStageFlags::COMPUTE,
+                    0,
+                    push_constant_bytes,
+                );
+                assert_eq!(push_constant_bytes.len(), 128);
                 // draw the triangles
                 dev.cmd_draw_indirect(
                     *cmdbuf,
@@ -647,7 +653,6 @@ impl State {
                 } else {
                     dev.device_wait_idle().expect("wait idle")
                 }
-
                 self.frame_index += 1;
             }
         }
@@ -1140,7 +1145,11 @@ impl ApplicationHandler for App {
                 .depth_attachment_format(depth_format);
 
             let push_constant_ranges = [vk::PushConstantRange::default()
-                .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::COMPUTE)
+                .stage_flags(
+                    vk::ShaderStageFlags::VERTEX
+                        | vk::ShaderStageFlags::COMPUTE
+                        | vk::ShaderStageFlags::FRAGMENT,
+                )
                 .size(size_of::<PushConstants>() as u32)];
             let pipeline_layout_create_info =
                 vk::PipelineLayoutCreateInfo::default().push_constant_ranges(&push_constant_ranges);
@@ -1759,19 +1768,8 @@ impl ApplicationHandler for App {
                     state.curr_iter = min(state.num_iters, state.curr_iter + 1);
                     println!("curr_iter: {:?}", state.curr_iter);
                 }
-                Key::Character("f") => unsafe {
-                    /*
-                    state.dispatch_buffer.mapped_slice()[0]
-                        .draw_indirect_command
-                        .vertex_count = ((1 << 17) * 3) as u32;
-                    println!(
-                        "Draw Indirect Count: {:?}",
-                        state.dispatch_buffer.mapped_slice()[0]
-                            .draw_indirect_command
-                            .vertex_count
-                    )*/
-                },
-
+                Key::Character("1") => state.rendering_mode = RenderingMode::Default,
+                Key::Character("2") => state.rendering_mode = RenderingMode::DebugWantSplit,
                 _ => (),
             },
             _ => (),
