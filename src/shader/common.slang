@@ -95,7 +95,7 @@ enum RenderingMode : uint32_t {
 
 struct PushConstant
 {
-    float4x4 view_project;
+    float4x4 view_project; 
     SceneData *scene_prev;
     SceneData *scene_next;
     DispatchData *dispatch_prev;
@@ -104,6 +104,8 @@ struct PushConstant
     float3 lookdir;
     RenderingMode rendering_mode;
 }
+[[vk::push_constant]]
+ConstantBuffer<PushConstant, ScalarDataLayout> pc;
 
 static const uint WORKGROUP_SIZE = 64;
 
@@ -137,8 +139,6 @@ enum TriState : int
     SIMPLIFY_ELEMENT = 2,
 }
 
-[[vk::push_constant]]
-ConstantBuffer<PushConstant, ScalarDataLayout> pc;
 
 uint heap_id_depth(uint heapid)
 {

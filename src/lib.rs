@@ -1301,14 +1301,14 @@ pub struct CBTScene {
 #[repr(C)]
 #[derive(Debug)]
 pub struct PushConstants {
-    view_project: Mat4,
-    scene_prev: vk::DeviceAddress,
-    scene_next: vk::DeviceAddress,
-    dispatch_prev: vk::DeviceAddress,
-    dispatch_next: vk::DeviceAddress,
-    camera_position: Vec3,
-    lookdir: Vec3,
-    rendering_mode: RenderingMode,
+    pub view_project: Mat4,
+    pub scene_prev: vk::DeviceAddress,
+    pub scene_next: vk::DeviceAddress,
+    pub dispatch_prev: vk::DeviceAddress,
+    pub dispatch_next: vk::DeviceAddress,
+    pub camera_position: Vec3,
+    pub lookdir: Vec3,
+    pub rendering_mode: RenderingMode,
 }
 
 pub fn get_push_constants(
