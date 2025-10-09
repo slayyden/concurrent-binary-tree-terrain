@@ -2,19 +2,7 @@
 
 TriState classify_triangle(float3[3] verts, uint heapid)
 {
-    if (/*heapid % 8 == 0 &&*/ heap_id_depth(heapid) < 28)
-    {
-        return TriState::BISECT_ELEMENT;
-    }
-    return TriState::UNCHANGED_ELEMENT;
     let normal = cross(verts[1] - verts[0], verts[2] - verts[1]);
-    /*
-    let depth = heap_id_depth(heapid);
-    if (depth < 25)
-    {
-        return TriState::BISECT_ELEMENT;
-    }
-    return TriState::UNCHANGED_ELEMENT;*/
 
     let normal_normalized = normalize(normal);
     if (dot(normal_normalized, pc.lookdir) > 0 + 10e-2)
@@ -44,16 +32,16 @@ TriState classify_triangle(float3[3] verts, uint heapid)
     let area = length(normal) / 2.0;*/
 
     // a is proportional to the screen area
-    if (area > 1 && heap_id_depth(heapid) < 18)
+    if (area > 0.1 && heap_id_depth(heapid) < 18)
     {
         return TriState::BISECT_ELEMENT;
     }
-    return TriState::UNCHANGED_ELEMENT;
 
     if (area < 0.001 && heap_id_depth(heapid) != pc.scene_next.base_depth)
     {
         return TriState::SIMPLIFY_ELEMENT;
     }
+    return TriState::UNCHANGED_ELEMENT;
 }
 
 [shader("compute")]

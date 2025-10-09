@@ -46,7 +46,7 @@ void split_element(uint3 tid: SV_DispatchThreadID)
     // check if we have enough memory to allocate compatibility chain elements
     int max_required_memory = (twin_id == INVALID_INDEX)                     ? 2                                     // boundary
                               : (neighbors_buffer[twin_id][TWIN] == curr_id) ? 4                                     // perfect matching
-                                                                             : 3 * (int(current_depth) - int(base_depth)) - 1; // double split for each entry in compatibility chain
+                                                                             : 3 * (int(current_depth) - int(base_depth) + 1) + 1; // double split for each entry in compatibility chain
     int remaining_memory = pc.dispatch_next.remaining_memory_count.add(-max_required_memory);
     if (remaining_memory < max_required_memory)
     {
