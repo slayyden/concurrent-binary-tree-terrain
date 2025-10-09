@@ -815,3 +815,19 @@ int max_required_memory = (twin_id == INVALID_INDEX) ? 2 // boundary
 It needs to be 4 because a triple split is 4 memory allocations
 NEVERMIND a bisector never needs to triple split something
 at most, it must double split
+
+AHA I FOUND THE ACTUAL BUG FUCK MY LIFE
+
+```c++
+// split_element.slang
+...
+while(true) {
+    if (...) {
+       ...
+    } else {
+       ...
+    }
+    // SHOULD BE OUTSIDE THE LOOP
+    pc.dispatch_next.remaining_memory_count.add(max_required_memory - used_memory);
+}
+```
