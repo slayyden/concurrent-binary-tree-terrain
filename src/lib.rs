@@ -1716,6 +1716,7 @@ pub enum RenderingMode {
     Default,
     RollbackDefault,
     DebugWantSplit,
+    DebugSplitCommand,
 }
 
 #[cfg(test)]

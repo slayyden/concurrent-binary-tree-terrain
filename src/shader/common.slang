@@ -94,6 +94,7 @@ enum RenderingMode : uint32_t {
     DEFAULT,
     ROLLBACK_DEFAULT,
     DBG_WANT_SPLIT,
+    DBG_SPLIT_COMMAND,
 }
 
 struct PushConstant
