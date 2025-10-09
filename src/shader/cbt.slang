@@ -140,3 +140,25 @@ void unset_bit(uint index)
     uint bit = 1u << bit_idx;
     leaves[leaf_idx].and(~bit);
 }
+
+float tri_area(float3 verts[3], float VdotN) {
+    var v0_projected = mul(float4(verts[0], 1), pc.view_project);
+    var v1_projected = mul(float4(verts[1], 1), pc.view_project);
+    var v2_projected = mul(float4(verts[2], 1), pc.view_project);
+    v0_projected.xy /= v0_projected.w;
+    v1_projected.xy /= v1_projected.w;
+    v2_projected.xy /= v2_projected.w;
+    v0_projected.xy = map_range(v0_projected.xy, float2(-1, -1), float2(1, 1), float2(0, 0), float2(SCREEN_WIDTH, SCREEN_HEIGHT));
+    v1_projected.xy = map_range(v1_projected.xy, float2(-1, -1), float2(1, 1), float2(0, 0), float2(SCREEN_WIDTH, SCREEN_HEIGHT));
+    v2_projected.xy = map_range(v2_projected.xy, float2(-1, -1), float2(1, 1), float2(0, 0), float2(SCREEN_WIDTH, SCREEN_HEIGHT));
+
+    let edge0 = v1_projected.xy - v0_projected.xy;
+    let edge1 = v2_projected.xy - v0_projected.xy;
+    let det = edge0.x * edge1.y - edge0.y * edge1.x;
+    var area = (0.5 * det) / (SCREEN_HEIGHT * SCREEN_WIDTH); // area as percentage of screen
+
+    // We over estimate the area at grazing angles
+    let areaOverestimation = lerp(2.0, 1.0, pow(abs(VdotN), 0.2));
+    area *= areaOverestimation;
+    return abs(area);
+}
