@@ -7,6 +7,7 @@ struct v2p
     float4 sv_position : SV_Position; // Specify the position of a vertex in screen space (after projection).
     uint bisector_id : BISECTOR_ID;
     uint4 user_data : USER_DATA;
+    float tri_area : TRI_AREA;
 };
 
 [shader("vertex")]
@@ -51,6 +52,17 @@ v2p vertexMain(uint vid: SV_VertexID)
         }
     }
 
+    let verts : float3[3] = {
+        vertex_buffer[vid/3 * 3],
+        vertex_buffer[vid/3 * 3 + 1],
+        vertex_buffer[vid/3 * 3 + 2],
+    };
+    let normal = cross(verts[1] - verts[0], verts[2] - verts[1]);
+    let normal_normalized = normalize(normal);
+    let VdotN = dot(normal_normalized, pc.lookdir);
+    output.tri_area = tri_area(verts, VdotN);
+
+
     // output.sv_position = mul(pos, pc.view_project);
     output.sv_position = pos;
     output.color = color;
@@ -65,6 +77,9 @@ v2p vertexMain(uint vid: SV_VertexID)
 [shader("pixel")]
 float4 fragmentMain(v2p input) : SV_Target
 {
+    return float4(
+        float3(input.tri_area) * 100, 1
+    );
     switch (pc.rendering_mode) {
         case RenderingMode::ROLLBACK_DEFAULT: 
             return float4(1.0, 0.0, 1.0, 1.0);
