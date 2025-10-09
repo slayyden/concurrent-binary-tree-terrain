@@ -29,16 +29,26 @@ v2p vertexMain(uint vid: SV_VertexID)
     let curr_id = scene.curr_id_buffer[vid / 3];
     let neighbors = scene.neighbors_buffer[curr_id];
 
-    if ((pc.rendering_mode == RenderingMode::DEFAULT) || (pc.rendering_mode == RenderingMode::ROLLBACK_DEFAULT)) {
-        var num_valid_neighbors = 0;
-        for (int i = 0; i < 3; ++i) {
-            if (neighbors[i] != INVALID_INDEX) {
-                num_valid_neighbors += 1;
+    switch (pc.rendering_mode) {
+        case RenderingMode::DEFAULT:
+        case RenderingMode::ROLLBACK_DEFAULT: {
+            var num_valid_neighbors = 0;
+            for (int i = 0; i < 3; ++i) {
+                if (neighbors[i] != INVALID_INDEX) {
+                    num_valid_neighbors += 1;
+                }
             }
+            output.user_data[0] = num_valid_neighbors;
+            break;
         }
-        output.user_data[0] = num_valid_neighbors;
-    } else if (pc.rendering_mode == RenderingMode::DBG_WANT_SPLIT) {
-        output.user_data = scene.allocation_indices_buffer[curr_id];
+        case RenderingMode::DBG_WANT_SPLIT: {
+            output.user_data = pc.scene_next.allocation_indices_buffer[curr_id];
+            break;
+        }
+        case RenderingMode::DBG_SPLIT_COMMAND: {
+            output.user_data[0] = pc.scene_next.bisector_split_command_buffer[curr_id].load();
+            break;
+        }
     }
 
     // output.sv_position = mul(pos, pc.view_project);
@@ -55,13 +65,6 @@ v2p vertexMain(uint vid: SV_VertexID)
 [shader("pixel")]
 float4 fragmentMain(v2p input) : SV_Target
 {
-    if (pc.rendering_mode == RenderingMode::DEFAULT) {
-        return float4(0.0, 0.0, 0.0, 1.0);
-    } else {
-        return float4(1.0, 1.0, 1.0, 1.0);
-    }
-
-    /*
     switch (pc.rendering_mode) {
         case RenderingMode::ROLLBACK_DEFAULT: 
             return float4(1.0, 0.0, 1.0, 1.0);
@@ -87,30 +90,38 @@ float4 fragmentMain(v2p input) : SV_Target
             return float4(0.0, 0.0, 0.0, 1.0);
         }
         case RenderingMode::DBG_WANT_SPLIT : {
-            // return float4(1.0, 1.0, 1.0, 1.0);
             var num_allocation_indices = 0;
             for (int i = 0; i < 4; i += 1) {
-                if (input.user_data[i] != INVALID_INDEX) {
-                    num_allocation_indices += 1;
-                }
+                if (input.user_data[i] == INVALID_INDEX) {break;}
+                num_allocation_indices += 1;
             }
             if (num_allocation_indices == 4) {
-                return float4(1.0, 0.0, 0.0, 1.0);
-            } else
-            if (num_allocation_indices == 3) {
                 return float4(0.0, 1.0, 0.0, 1.0);
-            } else
-            if (num_allocation_indices == 2) {
+            } else if (num_allocation_indices == 3) {
                 return float4(0.0, 0.0, 1.0, 1.0);
-            } else
-            if (num_allocation_indices == 1) {
-                return float4(0.5, 0.0, 0.0, 1.0);
-            } else {
+            } else if (num_allocation_indices == 2) {
+                return float4(0.5, 0.5, 0.0, 1.0);
+            } else if (num_allocation_indices == 1) {
+                return float4(0.0, 0.5, 0.5, 1.0);
+            } else if (num_allocation_indices == 0) {
                 return float4(1.0, 1.0, 1.0, 1.0);
+            } else {
+                return float4(1.0, 0.0, 1.0, 1.0);
             }
         }
+        case RenderingMode::DBG_SPLIT_COMMAND : {
+            let split_command = input.user_data[0];
+            switch (split_command) {
+                case TRIPLE_SPLIT: return float4(0.0, 1.0, 0.0, 1.0);
+                case LEFT_DOUBLE_SPLIT: return float4(0.75, 0.75, 0.0, 1.0);
+                case RIGHT_DOUBLE_SPLIT: return float4(0.0, 0.75, 0.75, 1.0);
+                case CENTER_SPLIT: return float4(0.5, 0.0, 0.5, 1.0);
+                case NO_SPLIT: return float4(1.0, 1.0, 1.0, 1.0);
+            }
+            return float4(0.0, 0.0, 0.0, 1.0);
+        }
     }
-    return float4(1.0, 1.0, 0.0, 1.0);*/
+    return float4(1.0, 1.0, 0.0, 1.0);
 }
 
 // Pixel shader

@@ -766,3 +766,34 @@ Very similar
 | Matrices have the alignment of their elements | Matrices in common LA libraries are 16-byte aligned for SIMD |
 
 WARNING: Matrices in LA libraries and matrices in Slang have the same in-memory representation, but may have DIFFERENT alignment.
+
+# Finally we have double buffering correct
+Okay so
+It seems like the "holes" are triangles that don't allocate.
+Their neighbors always seem to allocate.
+They always seem to be placed such that either
+1. They are in the compatibility chain of a neighbor that splits.
+2. They are in the compatibility chain of a "hole" that satisfies (1)
+3. They are in the compatibility chain of a "hole" that satisfies (2)
+
+Let's visualize their commands to see what else we can gather.
+
+Okay so it seems like they're not even being told to split.
+- wait no sometimes they are, but they don't allocate?
+  - maybe an issue with the find_zeros function
+seems like we're getting contradictory info so let's keep testing
+
+AHA it seems like we're overflowing the memory available.
+But why?
+This should have been prevented. HMMM
+
+IT WAS THIS LINE
+```c++
+int max_required_memory = (twin_id == INVALID_INDEX) ? 2 // boundary
+      : (neighbors_buffer[twin_id][TWIN] == curr_id) ? 4 // perfect matching
+      : 4 * (current_depth - base_depth) + 3;            // triple split for each entry in compatibility chain
+    //  ^ THIS WAS 3
+```
+It needs to be 4 because a triple split is 4 memory allocations
+NEVERMIND a bisector never needs to triple split something
+at most, it must double split

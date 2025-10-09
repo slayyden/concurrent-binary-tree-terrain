@@ -69,6 +69,7 @@ uint zero_bit_to_id(
     var cap : uint = 1 << 17;
     if (index >= cap - interior[0])
     {
+        pc.dispatch_next.debug_data.curr_heapid = INVALID_INDEX;
         return INVALID_INDEX;
     }
     let interior_base_offset = num_internal / 2;

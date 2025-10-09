@@ -6,7 +6,7 @@ use ash::{
     util::read_spv,
     vk::{
         self, BufferUsageFlags, CommandBufferSubmitInfo, Extent2D, PhysicalDeviceMemoryProperties,
-        PipelineStageFlags2, ShaderStageFlags,
+        PipelineStageFlags2, REMAINING_ARRAY_LAYERS, ShaderStageFlags,
     },
 };
 use dirt_jam::*;
@@ -225,6 +225,20 @@ impl State {
                     );
                 }
             };
+            let barrier = vk::MemoryBarrier2::default()
+                .src_access_mask(vk::AccessFlags2::MEMORY_WRITE)
+                .src_stage_mask(vk::PipelineStageFlags2::COPY)
+                .dst_access_mask(vk::AccessFlags2::MEMORY_READ)
+                .dst_stage_mask(vk::PipelineStageFlags2::COMPUTE_SHADER); // includes draw indirect
+            let barrier = debug_barrier;
+            let copy_compute_read_memory_barrier = {
+                || {
+                    dev.cmd_pipeline_barrier2(
+                        *cmdbuf,
+                        &vk::DependencyInfo::default().memory_barriers(&[barrier]),
+                    );
+                }
+            };
             // compute_write_compute_read_memory_barrier();
 
             let (prev_scene, next_scene, rendering_mode) = if self.divide {
@@ -239,6 +253,7 @@ impl State {
 
                     // copy data to start next scene
                     if NUM_ROLLBACK_FRAMES > 1 {
+                        // copy cbt data buffers
                         zip(
                             prev_cbt_scene.scene_buffer_handles.gpu_slices_iter(),
                             next_cbt_scene.scene_buffer_handles.gpu_slices_iter(),
@@ -252,6 +267,17 @@ impl State {
                                 &[region],
                             );
                         });
+
+                        // copy dispatch
+                        let region = vk::BufferCopy::default()
+                            .size(prev_cbt_scene.dispatch_buffer.size_in_bytes());
+                        dev.cmd_copy_buffer(
+                            *cmdbuf,
+                            prev_cbt_scene.dispatch_buffer.buffer(),
+                            next_cbt_scene.dispatch_buffer.buffer(),
+                            &[region],
+                        );
+                        copy_compute_read_memory_barrier();
                     }
                     (prev_cbt_scene, next_cbt_scene)
                 };
@@ -481,6 +507,7 @@ impl State {
 
                 let push_constants =
                     get_push_constants(prev_scene, next_scene, &self.camera, rendering_mode);
+                // println!("rendering_mode: {:?}", push_constants.rendering_mode);
                 let push_constant_bytes = byteslice(&push_constants);
                 // push constants
                 dev.cmd_push_constants(
@@ -518,7 +545,7 @@ impl State {
             if self.divide {
                 self.num_iters += 1;
                 self.curr_iter += 1;
-                println!("num_iters: {:?}", self.num_iters);
+                // println!("num_iters: {:?}", self.num_iters);
 
                 dev.cmd_bind_pipeline(
                     *cmdbuf,
@@ -632,10 +659,27 @@ impl State {
                 } else {
                     dev.device_wait_idle().expect("wait idle")
                 }
-                self.frame_index += 1;
+                let debug_data = next_scene.dispatch_buffer.mapped_slice()[0].debug_data;
+
+                let mut stop_dividing = false;
+                if debug_data.curr_id != 0 {
+                    println!("INCORRECT ESTIMATE. Off by {:?}", debug_data.curr_id);
+                    stop_dividing = true;
+                }
+
+                if debug_data.curr_heapid != 0 {
+                    println!("OVERFLOW");
+                    let remaining_memory =
+                        next_scene.dispatch_buffer.mapped_slice()[0].remaining_memory_count;
+                    println!("remaining_memory: {:?}", remaining_memory);
+                    stop_dividing = true;
+                }
+                if stop_dividing {
+                    self.divide = false;
+                }
             }
         }
-        self.divide = false;
+        self.frame_index += 1;
     }
 }
 
@@ -1739,6 +1783,7 @@ impl ApplicationHandler for App {
                 }
                 Key::Character("1") => state.rendering_mode = RenderingMode::Default,
                 Key::Character("2") => state.rendering_mode = RenderingMode::DebugWantSplit,
+                Key::Character("3") => state.rendering_mode = RenderingMode::DebugSplitCommand,
                 _ => (),
             },
             _ => (),

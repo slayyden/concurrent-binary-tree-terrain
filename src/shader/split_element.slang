@@ -46,7 +46,7 @@ void split_element(uint3 tid: SV_DispatchThreadID)
     // check if we have enough memory to allocate compatibility chain elements
     int max_required_memory = (twin_id == INVALID_INDEX)                     ? 2                                     // boundary
                               : (neighbors_buffer[twin_id][TWIN] == curr_id) ? 4                                     // perfect matching
-                                                                             : 3 * (current_depth - base_depth) + 2; // triple split for each entry in compatibility chain
+                                                                             : 3 * (int(current_depth) - int(base_depth)) - 1; // double split for each entry in compatibility chain
     int remaining_memory = pc.dispatch_next.remaining_memory_count.add(-max_required_memory);
     if (remaining_memory < max_required_memory)
     {
@@ -68,7 +68,7 @@ void split_element(uint3 tid: SV_DispatchThreadID)
     splitting_buffer[target_location] = curr_id;
 
     // iterate over compabibility chain
-    while (true)
+    while (true && used_memory != 0)
     {
         // base case: boundary
         if (twin_id == INVALID_INDEX)
@@ -124,7 +124,10 @@ void split_element(uint3 tid: SV_DispatchThreadID)
             }
         }
 
-        // return unclaimed memory
-        pc.dispatch_next.remaining_memory_count.add(max_required_memory - used_memory);
     }
+    if (used_memory > max_required_memory) {
+        pc.dispatch_next.debug_data.curr_id = used_memory - max_required_memory;
+    }
+    // return unclaimed memory
+    pc.dispatch_next.remaining_memory_count.add(max(0, max_required_memory - used_memory));
 }
