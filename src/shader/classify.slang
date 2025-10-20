@@ -28,12 +28,6 @@ TriState classify_triangle(float3[3] verts, uint heapid)
     let area = (0.5 * det) / (SCREEN_HEIGHT * SCREEN_WIDTH); // area as percentage of screen
     */
     let area = tri_area(verts, VdotN);
-    /*
-    let tri_center = 0.3333 * (verts[0] + verts[1] + verts[2]);
-    let center_to_cam = tri_center - pc.cam_pos;
-    let center_to_cam_normalized = normalize(center_to_cam);
-    let dist_to_cam = length(center_to_cam);
-    let area = length(normal) / 2.0;*/
 
     // a is proportional to the screen area
     if (area > 0.01 && heap_id_depth(heapid) < 29)

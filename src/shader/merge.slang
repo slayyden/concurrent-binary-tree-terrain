@@ -4,14 +4,12 @@
 void merge(
     uint3 tid: SV_DispatchThreadID)
 {
-    if (tid.x >= pc.dispatch_next.merging_bisector_count.load())
-    {
-        return;
-    }
-    let curr_id = pc.scene_next.merging_bisector_buffer[tid.x]; // 6, 8
+    if (tid.x >= pc.dispatch_next.merging_bisector_count.load()) return;
+
+    let curr_id = pc.scene_next.merging_bisector_buffer[tid.x];
     let neighbor_buffer = pc.scene_next.neighbors_buffer;
     let heap_id_buffer = pc.scene_next.heapid_buffer;
-    uint3 curr_neighbors = neighbor_buffer[curr_id]; //[7, 9, 1], [9, 7, 4]
+    uint3 curr_neighbors = neighbor_buffer[curr_id];
 
     uint next_id = curr_neighbors.x;
     uint3 next_neighbors = neighbor_buffer[next_id];
