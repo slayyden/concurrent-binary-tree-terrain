@@ -17,7 +17,7 @@ void allocate(
 
     let first_bit_index = pc.dispatch_next.allocation_counter.add(num_allocations);
 
-    var allocation_indices = uint4(INVALID_INDEX, INVALID_INDEX, INVALID_INDEX, INVALID_INDEX);
+    var allocation_indices = uint4(INVALID_INDEX);
 
     for (int i = 0; i < num_allocations; ++i)
     {
