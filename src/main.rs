@@ -76,6 +76,7 @@ struct State {
 
     pipeline_handles: PipelineHandles,
     cbt_scenes: [CBTScene; NUM_ROLLBACK_FRAMES],
+    argument_buffer: MappedBuffer<ArgumentBufferData>,
 
     camera: CameraState,
     algorithm_data: PipelineData,
@@ -1645,6 +1646,20 @@ impl ApplicationHandler for App {
                     dispatch_buffer: dispatch_buffer,
                 }
             });
+            let screen_extent = Extent2D {
+                width: 1920,
+                height: 1080,
+            };
+            let argument_buffer = mapped_buffer_from_data(
+                byteslice(&get_argument_buffer_data(
+                    &cbt_scenes[0],
+                    &cbt_scenes[1],
+                    &CameraState::new(Vec3::ZERO, 0.0, 0.0, 0.0, screen_extent, 0.0),
+                    RenderingMode::Default,
+                )),
+                vk::BufferUsageFlags::UNIFORM_BUFFER,
+                &boilerplate,
+            );
             device.device_wait_idle().expect("Wait idle");
 
             let pipeline_handles = PipelineHandles {
@@ -1707,6 +1722,7 @@ impl ApplicationHandler for App {
                 pipeline_handles: pipeline_handles,
                 cbt_scenes: cbt_scenes,
                 curr_iter: 0,
+                argument_buffer: MappedBuffer::new(device),
             })
         }
     }
