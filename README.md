@@ -1,3 +1,6 @@
+
+[![Watch the video](https://raw.githubusercontent.com/slayyden/concurrent-binary-tree-terrain/main/stress_test.mp4)](https://raw.githubusercontent.com/yourusername/yourrepository/main/assets/video.mp4)
+
 Shaders are already compiled into spirv.
 Build with `cargo run`.
 
