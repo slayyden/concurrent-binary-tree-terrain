@@ -109,6 +109,33 @@ pub struct AllocatedBuffer<T> {
     _marker: PhantomData<T>,
 }
 
+pub struct ArgumentBuffer<T>(MappedBuffer<T>);
+impl<T: Copy> ArgumentBuffer<T> {
+    fn new(
+        device: &ash::Device,
+        num_elems: u64,
+        mem_props: vk::PhysicalDeviceMemoryProperties,
+        sharing_mode: vk::SharingMode,
+        memory_type: vk::MemoryPropertyFlags,
+    ) -> Self {
+        let allocated_buffer = MappedBuffer::<T>::new(
+            device,
+            num_elems,
+            mem_props,
+            vk::BufferUsageFlags::UNIFORM_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
+            sharing_mode,
+            memory_type,
+        );
+        Self(allocated_buffer)
+    }
+
+    fn copy_from_slice(&mut self, data: &[T]) {
+        unsafe {
+            self.0.mapped_slice().copy_from_slice(data);
+        }
+    }
+}
+
 impl<T> AllocatedBuffer<T> {
     fn map_memory(&self, device: &ash::Device) -> *mut T {
         unsafe {
@@ -396,6 +423,7 @@ impl<T: Copy> GPUBuffer<T> for MappedBuffer<T> {
         self.allocated_buffer.device_address()
     }
 }
+
 pub struct CBT {
     pub depth: u32, // number of edges from the root to a furthest leaf
     pub interior: Vec<u32>,
@@ -1319,6 +1347,38 @@ pub fn get_push_constants(
 ) -> PushConstants {
     // prev and next scene MAY alias
     PushConstants {
+        view_project: camera.projection_matrix() * camera.view_matrix(),
+        scene_prev: prev_scene.scene_buffer.device_address(),
+        dispatch_prev: prev_scene.dispatch_buffer.device_address(),
+        scene_next: next_scene.scene_buffer.device_address(),
+        dispatch_next: next_scene.dispatch_buffer.device_address(),
+        camera_position: Vec3::from(camera.pos),
+        lookdir: Vec3::from(camera.lookdir()),
+        rendering_mode: rendering_mode,
+    }
+}
+
+#[repr(C)]
+#[derive(Debug)]
+pub struct ArgumentBufferData {
+    pub view_project: Mat4,
+    pub scene_prev: vk::DeviceAddress,
+    pub scene_next: vk::DeviceAddress,
+    pub dispatch_prev: vk::DeviceAddress,
+    pub dispatch_next: vk::DeviceAddress,
+    pub camera_position: Vec3,
+    pub lookdir: Vec3,
+    pub rendering_mode: RenderingMode,
+}
+
+pub fn get_argument_buffer_data(
+    prev_scene: &CBTScene,
+    next_scene: &CBTScene,
+    camera: &CameraState,
+    rendering_mode: RenderingMode,
+) -> ArgumentBufferData {
+    // prev and next scene MAY alias
+    ArgumentBufferData {
         view_project: camera.projection_matrix() * camera.view_matrix(),
         scene_prev: prev_scene.scene_buffer.device_address(),
         dispatch_prev: prev_scene.dispatch_buffer.device_address(),
