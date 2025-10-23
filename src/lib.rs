@@ -1237,8 +1237,6 @@ pub struct SceneDataGPU {
     pub vertex_buffer: vk::DeviceAddress,
     pub curr_id_buffer: vk::DeviceAddress,
 
-    pub swapback_buffer: vk::DeviceAddress,
-
     // integers
     pub num_memory_blocks: u32,
     pub base_depth: u32,
@@ -1370,7 +1368,7 @@ pub fn get_push_constants(
 }
 
 #[repr(C)]
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct ArgumentBufferData {
     pub view_project: Mat4,
     pub scene_prev: vk::DeviceAddress,

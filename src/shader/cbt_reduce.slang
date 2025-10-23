@@ -178,19 +178,10 @@ void reduce(uint3 threadId: SV_DispatchThreadID)
     if (threadId.x == 0 && threadId.y == 0 && threadId.z == 0)
     {
         let num_bisectors : uint = buf0[0];
-<<<<<<< HEAD
-        pc.dispatch.remaining_memory_count.store((int)(1 << 17) - (int)num_bisectors);
-        pc.dispatch.num_allocated_blocks = num_bisectors;
-        pc.dispatch.draw_indirect_command.vertex_count = 3 * num_bisectors;
-        // pc.dispatch.dispatch_vertex_compute_command.x = div_ceil(num_bisectors, WORKGROUP_SIZE);
-        // FOR SWAPBACK ONLY
-        pc.dispatch.dispatch_vertex_compute_command.x = div_ceil((1 << 17), WORKGROUP_SIZE);
-=======
         pc.dispatch_next.remaining_memory_count.store((int)(1 << 17) - (int)num_bisectors);
         pc.dispatch_next.num_allocated_blocks = num_bisectors;
         pc.dispatch_next.draw_indirect_command.vertex_count = 3 * num_bisectors;
         pc.dispatch_next.dispatch_vertex_compute_command.x = div_ceil(num_bisectors, WORKGROUP_SIZE);
->>>>>>> aba2c23 (reference data from multiple scenes)
     }
     return;
 }

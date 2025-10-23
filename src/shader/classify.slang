@@ -62,9 +62,9 @@ void classify(uint3 tid: SV_DispatchThreadID)
     // pc.scene_next.bisector_state_buffer[curr_id] = TriState::;
 
     float3 verts[3] = {
-        get_vertex_buffer(pc, curr_id * 3),
-        get_vertex_buffer(pc, curr_id * 3 + 1),
-        get_vertex_buffer(pc, curr_id * 3 + 2)
+        vertex_buffer[curr_id * 3],
+        vertex_buffer[curr_id * 3 + 1],
+        vertex_buffer[curr_id * 3 + 2],
     };
 
     let state = classify_triangle(verts, heap_id);

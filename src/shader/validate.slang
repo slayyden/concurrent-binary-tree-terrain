@@ -14,9 +14,9 @@ void validate(uint3 tid: SV_DispatchThreadID)
     let curr_id = pc.scene_next.curr_id_buffer[tid.x];
     let neighbors = pc.scene_next.neighbors_buffer[curr_id];
     let vertices : float3[3] = {
-        get_vertex_buffer(pc, tid.x * 3),
-        get_vertex_buffer(pc, tid.x * 3 + 1),
-        get_vertex_buffer(pc, tid.x * 3 + 2)
+        vertex_buffer[tid.x * 3],
+        vertex_buffer[tid.x * 3 + 1],
+        vertex_buffer[tid.x * 3 + 2],
     };
 
     // ensure each valid neighbor shares two vertices

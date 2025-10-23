@@ -24,7 +24,7 @@ v2p vertexMain(uint vid: SV_VertexID)
 
     var color = float3(1.0, 0.0, 0.0);
     color = colors[vid % 3];
-    float4 pos = float4(get_vertex_buffer(pc, vid), 1);
+    float4 pos = float4(vertex_buffer[vid], 1);
     pos = mul(pos, pc.view_project);
 
     let curr_id = scene.curr_id_buffer[vid / 3];

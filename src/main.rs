@@ -24,7 +24,6 @@ use winit::{
     window::{Window, WindowId},
 };
 
-<<<<<<< HEAD
 #[repr(C)]
 #[derive(Debug)]
 struct PushConstants {
@@ -37,14 +36,6 @@ struct PushConstants {
     swapback: u32,
 }
 
-struct CBTScene {
-    scene_buffer_handles: SceneCPUHandles,
-    scene_buffer: AllocatedBuffer<SceneDataGPU>,
-    dispatch_buffer: MappedBuffer<DispatchDataGPU>,
-}
-
-=======
->>>>>>> 56002d8 (swapping back workds)
 const NUM_ROLLBACK_FRAMES: usize = 2;
 
 struct State {
@@ -1650,13 +1641,14 @@ impl ApplicationHandler for App {
                 width: 1920,
                 height: 1080,
             };
+            let argument_buffer_data_ref = &get_argument_buffer_data(
+                &cbt_scenes[0],
+                &cbt_scenes[1],
+                &CameraState::new(Vec3::ZERO, 0.0, 0.0, 0.0, screen_extent, 0.0),
+                RenderingMode::Default,
+            );
             let argument_buffer = mapped_buffer_from_data(
-                byteslice(&get_argument_buffer_data(
-                    &cbt_scenes[0],
-                    &cbt_scenes[1],
-                    &CameraState::new(Vec3::ZERO, 0.0, 0.0, 0.0, screen_extent, 0.0),
-                    RenderingMode::Default,
-                )),
+                std::slice::from_ref(argument_buffer_data_ref),
                 vk::BufferUsageFlags::UNIFORM_BUFFER,
                 &boilerplate,
             );
@@ -1722,7 +1714,7 @@ impl ApplicationHandler for App {
                 pipeline_handles: pipeline_handles,
                 cbt_scenes: cbt_scenes,
                 curr_iter: 0,
-                argument_buffer: MappedBuffer::new(device),
+                argument_buffer: argument_buffer,
             })
         }
     }
