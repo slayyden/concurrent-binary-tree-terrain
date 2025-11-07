@@ -36,7 +36,8 @@ struct PushConstants {
     swapback: u32,
 }
 
-const NUM_ROLLBACK_FRAMES: usize = 2;
+// can be more than 1 for debugging
+const NUM_ROLLBACK_FRAMES: usize = 1;
 
 struct State {
     // dbg
@@ -67,7 +68,7 @@ struct State {
 
     pipeline_handles: PipelineHandles,
     cbt_scenes: [CBTScene; NUM_ROLLBACK_FRAMES],
-    argument_buffer: MappedBuffer<ArgumentBufferData>,
+    argument_buffer: UniformBuffer<UniformBufferData>,
 
     camera: CameraState,
     algorithm_data: PipelineData,
@@ -174,33 +175,11 @@ impl State {
                 &[pre_barrier],
             );
 
-            /*
-            let memory_barrier = vk::MemoryBarrier::default()
-                .src_access_mask(vk::AccessFlags::SHADER_WRITE)
-                .dst_access_mask(vk::AccessFlags::SHADER_READ);
-            let global_memory_barrier = || {
-                dev.cmd_pipeline_barrier(
-                    *cmdbuf,
-                    vk::PipelineStageFlags::ALL_COMMANDS,
-                    vk::PipelineStageFlags::ALL_COMMANDS,
-                    vk::DependencyFlags::empty(),
-                    &[memory_barrier],
-                    &[],
-                    &[],
-                )
-            }; */
-
-            let debug_barrier = vk::MemoryBarrier2::default()
-                .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
-                .src_access_mask(vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE)
-                .dst_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
-                .dst_access_mask(vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE);
             let barrier = vk::MemoryBarrier2::default()
                 .src_access_mask(vk::AccessFlags2::MEMORY_WRITE)
                 .src_stage_mask(vk::PipelineStageFlags2::COMPUTE_SHADER)
                 .dst_access_mask(vk::AccessFlags2::MEMORY_READ)
                 .dst_stage_mask(vk::PipelineStageFlags2::COMPUTE_SHADER);
-            let barrier = debug_barrier;
             let compute_write_compute_read_memory_barrier = {
                 || {
                     dev.cmd_pipeline_barrier2(
@@ -215,7 +194,6 @@ impl State {
                 .dst_access_mask(vk::AccessFlags2::INDIRECT_COMMAND_READ)
                 // DRAW_INDIRECT includes consumption of indirect command buffers by an indirect draw, compute, or raytracing command
                 .dst_stage_mask(vk::PipelineStageFlags2::DRAW_INDIRECT);
-            let barrier = debug_barrier;
             let compute_write_indirect_read_barrier = {
                 || {
                     dev.cmd_pipeline_barrier2(
@@ -229,7 +207,6 @@ impl State {
                 .src_stage_mask(vk::PipelineStageFlags2::COMPUTE_SHADER)
                 .dst_access_mask(vk::AccessFlags2::MEMORY_READ)
                 .dst_stage_mask(vk::PipelineStageFlags2::ALL_GRAPHICS); // includes draw indirect
-            let barrier = debug_barrier;
             let compute_write_graphics_read_memory_barrier = {
                 || {
                     dev.cmd_pipeline_barrier2(
@@ -243,7 +220,6 @@ impl State {
                 .src_stage_mask(vk::PipelineStageFlags2::COPY)
                 .dst_access_mask(vk::AccessFlags2::MEMORY_READ)
                 .dst_stage_mask(vk::PipelineStageFlags2::COMPUTE_SHADER); // includes draw indirect
-            let barrier = debug_barrier;
             let copy_compute_read_memory_barrier = {
                 || {
                     dev.cmd_pipeline_barrier2(
@@ -252,7 +228,6 @@ impl State {
                     );
                 }
             };
-            // compute_write_compute_read_memory_barrier();
 
             let (prev_scene, next_scene, rendering_mode) = if self.divide {
                 // get a "mutable reference" to the correct scene
@@ -659,37 +634,6 @@ impl State {
                 self.swapchain_loader
                     .queue_present(self.present_queue, &present_info)
                     .unwrap();
-            }
-            if true {
-                if true {
-                    dev.wait_semaphores(
-                        &vk::SemaphoreWaitInfo::default()
-                            .semaphores(&[self.frame_pace_semaphore])
-                            .values(&[self.frame_index + 1]),
-                        u64::MAX,
-                    )
-                    .expect("Wait semaphore");
-                } else {
-                    dev.device_wait_idle().expect("wait idle")
-                }
-                let debug_data = next_scene.dispatch_buffer.mapped_slice()[0].debug_data;
-
-                let mut stop_dividing = false;
-                if debug_data.curr_id != 0 {
-                    println!("INCORRECT ESTIMATE. Off by {:?}", debug_data.curr_id);
-                    stop_dividing = true;
-                }
-
-                if debug_data.curr_heapid != 0 {
-                    println!("OVERFLOW");
-                    let remaining_memory =
-                        next_scene.dispatch_buffer.mapped_slice()[0].remaining_memory_count;
-                    println!("remaining_memory: {:?}", remaining_memory);
-                    stop_dividing = true;
-                }
-                if stop_dividing {
-                    self.divide = false;
-                }
             }
         }
         self.frame_index += 1;
@@ -1641,17 +1585,8 @@ impl ApplicationHandler for App {
                 width: 1920,
                 height: 1080,
             };
-            let argument_buffer_data_ref = &get_argument_buffer_data(
-                &cbt_scenes[0],
-                &cbt_scenes[1],
-                &CameraState::new(Vec3::ZERO, 0.0, 0.0, 0.0, screen_extent, 0.0),
-                RenderingMode::Default,
-            );
-            let argument_buffer = mapped_buffer_from_data(
-                std::slice::from_ref(argument_buffer_data_ref),
-                vk::BufferUsageFlags::UNIFORM_BUFFER,
-                &boilerplate,
-            );
+            let argument_buffer =
+                UniformBuffer::new(&device, 1, mem_props, vk::SharingMode::EXCLUSIVE);
             device.device_wait_idle().expect("Wait idle");
 
             let pipeline_handles = PipelineHandles {

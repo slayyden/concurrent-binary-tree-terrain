@@ -4,7 +4,7 @@ This is an implementation of [Concurrent Binary Trees for Large Scale Game Compo
 Please see `stress_test.mp4` for a test with constant triangle splitting and merging.
 
 # Building
-Shaders are already compiled into spirv.
+Shaders are already compiled into spirv. To build them yourself use `shadercomp.sh`.
 Build with `cargo run`.
 MacOS systems need to install MoltenVK.
 You may need to remove Vulkan compatibility extensions for this to work outside of Molten-VK.

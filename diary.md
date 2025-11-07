@@ -831,3 +831,20 @@ while(true) {
     pc.dispatch_next.remaining_memory_count.add(max_required_memory - used_memory);
 }
 ```
+
+Okay going over the frame again
+
+1. wait_for_fences to reuse the command buffer
+2. acquire_next_image performs a BLOCKING wait on the CPU until next image is available. Then, it signals a semaphore.
+3. submit
+  - semaphore wait for completion of previous frame
+    - all writes of previous frame become visible
+  - semaphore wait for swapchain availability
+    - im just gonna pretend this is an execution dependency
+
+  - signal completion of frame rendering (A)
+    - all writes of this frame become available
+  - signal completion for next frame to begin work
+4. wait on semaphore A for presentation
+
+WORM requires the assumption that available => visible if there were no previous visibility operations that override it.

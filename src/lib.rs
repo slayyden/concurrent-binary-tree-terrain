@@ -13,7 +13,7 @@ use glam::{Mat4, Vec3, Vec3A, Vec4};
 
 use ash::{
     Device,
-    vk::{self, Extent2D},
+    vk::{self, Extent2D, QueueFamilyQueryResultStatusPropertiesKHR},
 };
 
 pub fn byteslice<T: Sized>(p: &T) -> &[u8] {
@@ -109,14 +109,13 @@ pub struct AllocatedBuffer<T> {
     _marker: PhantomData<T>,
 }
 
-pub struct ArgumentBuffer<T>(MappedBuffer<T>);
-impl<T: Copy> ArgumentBuffer<T> {
-    fn new(
+pub struct UniformBuffer<T>(MappedBuffer<T>);
+impl<T: Copy> UniformBuffer<T> {
+    pub fn new(
         device: &ash::Device,
         num_elems: u64,
         mem_props: vk::PhysicalDeviceMemoryProperties,
         sharing_mode: vk::SharingMode,
-        memory_type: vk::MemoryPropertyFlags,
     ) -> Self {
         let allocated_buffer = MappedBuffer::<T>::new(
             device,
@@ -124,7 +123,7 @@ impl<T: Copy> ArgumentBuffer<T> {
             mem_props,
             vk::BufferUsageFlags::UNIFORM_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
             sharing_mode,
-            memory_type,
+            vk::MemoryPropertyFlags::HOST_VISIBLE,
         );
         Self(allocated_buffer)
     }
@@ -1367,9 +1366,17 @@ pub fn get_push_constants(
     }
 }
 
+// half of (change in width/height of frustum) / (change in depth)
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
-pub struct ArgumentBufferData {
+pub struct FrustumSlopes {
+    horizontal_slope: f32,
+    vertical_slope: f32,
+}
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct UniformBufferData {
     pub view_project: Mat4,
     pub scene_prev: vk::DeviceAddress,
     pub scene_next: vk::DeviceAddress,
@@ -1377,17 +1384,21 @@ pub struct ArgumentBufferData {
     pub dispatch_next: vk::DeviceAddress,
     pub camera_position: Vec3,
     pub lookdir: Vec3,
+
+    // for camera culling
+    pub frustum_slopes: FrustumSlopes,
+
     pub rendering_mode: RenderingMode,
 }
 
-pub fn get_argument_buffer_data(
+pub fn get_uniform_buffer_data(
     prev_scene: &CBTScene,
     next_scene: &CBTScene,
     camera: &CameraState,
     rendering_mode: RenderingMode,
-) -> ArgumentBufferData {
+) -> UniformBufferData {
     // prev and next scene MAY alias
-    ArgumentBufferData {
+    UniformBufferData {
         view_project: camera.projection_matrix() * camera.view_matrix(),
         scene_prev: prev_scene.scene_buffer.device_address(),
         dispatch_prev: prev_scene.dispatch_buffer.device_address(),
@@ -1396,6 +1407,7 @@ pub fn get_argument_buffer_data(
         camera_position: Vec3::from(camera.pos),
         lookdir: Vec3::from(camera.lookdir()),
         rendering_mode: rendering_mode,
+        frustum_slopes: camera.get_frustum_slopes(),
     }
 }
 
@@ -1690,9 +1702,9 @@ pub struct CameraState {
     pub yaw: f32,
 
     // fov in radians
-    pub fovy: f32,
+    pub fov_vertical: f32,
     resolution: vk::Extent2D,
-    aspect: f32,
+    aspect: f32, // width/height
 
     pub near: f32,
 }
@@ -1711,7 +1723,7 @@ impl CameraState {
             pos: pos,
             pitch: pitch,
             yaw: yaw,
-            fovy: fovy,
+            fov_vertical: fovy,
             resolution: resolution,
             aspect: aspect,
             near: near,
@@ -1755,7 +1767,7 @@ impl CameraState {
     }
 
     pub fn projection_matrix(&self) -> Mat4 {
-        let focal_length = 1.0 / f32::tan(self.fovy * 0.5);
+        let focal_length = 1.0 / f32::tan(self.fov_vertical * 0.5);
         let x = focal_length / self.aspect;
         let y = focal_length;
 
@@ -1765,6 +1777,14 @@ impl CameraState {
             Vec4::new(0.0, 0.0, 0.0, 1.0),
             Vec4::new(0.0, 0.0, self.near, 0.0),
         )
+    }
+
+    pub fn get_frustum_slopes(&self) -> FrustumSlopes {
+        let fov_horizontal = 2.0 * f32::atan(f32::tan(self.fov_vertical * 0.5) * self.aspect());
+        FrustumSlopes {
+            horizontal_slope: f32::tan(fov_horizontal / 2.0),
+            vertical_slope: f32::tan(self.fov_vertical / 2.0),
+        }
     }
 }
 
