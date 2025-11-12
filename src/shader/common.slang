@@ -93,19 +93,30 @@ enum RenderingMode : uint32_t {
     DBG_WANT_SPLIT,
     DBG_SPLIT_COMMAND,
 }
+// half of (change in width/height of frustum) / (change in depth)
+struct FrustumSlopes {
+    float horizontal_slope;
+    float vertical_slope;
+}
 
-struct PushConstant
-{
-    float4x4 view_project; 
-    SceneData *scene_prev;
+struct UniformBufferData {
+    float4x4 view_project;
+    SceneData *scene_prev; 
     SceneData *scene_next;
     DispatchData *dispatch_prev;
     DispatchData *dispatch_next;
-    float3 cam_pos;
-    uint8_t pad0;
-
+    float3 camera_position;
     float3 lookdir;
-    RenderingMode rendering_mode;
+
+    // for camera culling
+    FrustumSlopes frustum_slopes;
+
+    uint rendering_mode;
+}
+
+struct PushConstant
+{
+    UniformBufferData* uniform_buffer;
 }
 [[vk::push_constant]]
 ConstantBuffer<PushConstant, ScalarDataLayout> pc;
@@ -167,7 +178,7 @@ uint find_edge_type(uint curr_id, uint3 neighbor_neighbors)
     {
         if (neighbor_neighbors[TWIN] != curr_id)
         {
-            pc.dispatch_next.debug_data.curr_heapid.compareExchange(0, curr_id);
+            pc.uniform_buffer.dispatch_next.debug_data.curr_heapid.compareExchange(0, curr_id);
         }
         return TWIN;
     }

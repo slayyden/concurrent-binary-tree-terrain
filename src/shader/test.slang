@@ -13,7 +13,8 @@ struct v2p
 [shader("vertex")]
 v2p vertexMain(uint vid: SV_VertexID)
 {
-    let scene = (pc.rendering_mode == RenderingMode::DEFAULT) ? pc.scene_next : pc.scene_prev;
+    let uniform_buffer = pc.uniform_buffer;
+    let scene = (uniform_buffer.rendering_mode == RenderingMode::DEFAULT) ? uniform_buffer.scene_next : uniform_buffer.scene_prev;
     let vertex_buffer = scene.vertex_buffer;
     const float3 colors[3] = float3[3](
         float3(1.0f, 0.0f, 0.0f), // red
@@ -25,12 +26,12 @@ v2p vertexMain(uint vid: SV_VertexID)
     var color = float3(1.0, 0.0, 0.0);
     color = colors[vid % 3];
     float4 pos = float4(vertex_buffer[vid], 1);
-    pos = mul(pos, pc.view_project);
+    pos = mul(pos, uniform_buffer.view_project);
 
     let curr_id = scene.curr_id_buffer[vid / 3];
     let neighbors = scene.neighbors_buffer[curr_id];
 
-    switch (pc.rendering_mode) {
+    switch (uniform_buffer.rendering_mode) {
         case RenderingMode::DEFAULT:
         case RenderingMode::ROLLBACK_DEFAULT: {
             var num_valid_neighbors = 0;
@@ -43,11 +44,11 @@ v2p vertexMain(uint vid: SV_VertexID)
             break;
         }
         case RenderingMode::DBG_WANT_SPLIT: {
-            output.user_data = pc.scene_next.allocation_indices_buffer[curr_id];
+            output.user_data = uniform_buffer.scene_next.allocation_indices_buffer[curr_id];
             break;
         }
         case RenderingMode::DBG_SPLIT_COMMAND: {
-            output.user_data[0] = pc.scene_next.bisector_split_command_buffer[curr_id].load();
+            output.user_data[0] = uniform_buffer.scene_next.bisector_split_command_buffer[curr_id].load();
             break;
         }
     }
@@ -59,14 +60,14 @@ v2p vertexMain(uint vid: SV_VertexID)
     };
     let normal = cross(verts[1] - verts[0], verts[2] - verts[1]);
     let normal_normalized = normalize(normal);
-    let VdotN = dot(normal_normalized, pc.lookdir);
+    let VdotN = dot(normal_normalized, uniform_buffer.lookdir);
     output.tri_area = tri_area(verts, VdotN);
 
 
     // output.sv_position = mul(pos, pc.view_project);
     output.sv_position = pos;
     output.color = color;
-    output.bisector_id = pc.scene_next.curr_id_buffer[vid / 3];
+    output.bisector_id = uniform_buffer.scene_next.curr_id_buffer[vid / 3];
 
 
 
@@ -80,7 +81,8 @@ float4 fragmentMain(v2p input) : SV_Target
     return float4(
         float3(input.tri_area) * 100, 1
     );
-    switch (pc.rendering_mode) {
+    let uniform_buffer = pc.uniform_buffer;
+    switch (uniform_buffer.rendering_mode) {
         case RenderingMode::ROLLBACK_DEFAULT: 
             return float4(1.0, 0.0, 1.0, 1.0);
         case RenderingMode::DEFAULT : {

@@ -9,9 +9,12 @@ groupshared uint buf1[2048];
 void reduce(uint3 threadId: SV_DispatchThreadID)
 {
     let tid = threadId.x;
+    let uniform_buffer = pc.uniform_buffer;
+    let scene = uniform_buffer.scene_next;
+    let dispatch = uniform_buffer.dispatch_next;
     let interior_offset = num_internal / 2;
-    let interior = pc.scene_next.cbt_interior;
-    let leaves = pc.scene_next.cbt_leaves;
+    let interior = scene.cbt_interior;
+    let leaves = scene.cbt_leaves;
 
     // bottom level: [4095, 8191)
     for (uint i = 0; i < 4096; i += 1024)
@@ -178,10 +181,10 @@ void reduce(uint3 threadId: SV_DispatchThreadID)
     if (threadId.x == 0 && threadId.y == 0 && threadId.z == 0)
     {
         let num_bisectors : uint = buf0[0];
-        pc.dispatch_next.remaining_memory_count.store((int)(1 << 17) - (int)num_bisectors);
-        pc.dispatch_next.num_allocated_blocks = num_bisectors;
-        pc.dispatch_next.draw_indirect_command.vertex_count = 3 * num_bisectors;
-        pc.dispatch_next.dispatch_vertex_compute_command.x = div_ceil(num_bisectors, WORKGROUP_SIZE);
+        dispatch.remaining_memory_count.store((int)(1 << 17) - (int)num_bisectors);
+        dispatch.num_allocated_blocks = num_bisectors;
+        dispatch.draw_indirect_command.vertex_count = 3 * num_bisectors;
+        dispatch.dispatch_vertex_compute_command.x = div_ceil(num_bisectors, WORKGROUP_SIZE);
     }
     return;
 }

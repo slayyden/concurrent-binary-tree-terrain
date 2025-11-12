@@ -5,17 +5,21 @@
 void allocate(
     uint3 threadId: SV_DispatchThreadID) 
 {
+    let uniform_buffer = pc.uniform_buffer;
+    let scene = uniform_buffer.scene_next;
+    let dispatch = uniform_buffer.dispatch_next;
     let tid = threadId.x;
-    if (tid >= pc.dispatch_next.splitting_buffer_count.load())
+
+    if (tid >= dispatch.splitting_buffer_count.load())
     {
         return;
     }
-    let curr_id = pc.scene_next.splitting_buffer[tid];
-    let command = pc.scene_next.bisector_split_command_buffer[curr_id].load();
+    let curr_id = scene.splitting_buffer[tid];
+    let command = scene.bisector_split_command_buffer[curr_id].load();
 
     let num_allocations = countbits(command) + 1;
 
-    let first_bit_index = pc.dispatch_next.allocation_counter.add(num_allocations);
+    let first_bit_index = dispatch.allocation_counter.add(num_allocations);
 
     var allocation_indices = uint4(INVALID_INDEX);
 
@@ -25,7 +29,7 @@ void allocate(
         let child_id = zero_bit_to_id(bit_index);
         allocation_indices[i] = child_id;
     }
-    pc.scene_next.allocation_indices_buffer[curr_id] = allocation_indices;
-    pc.scene_next.bisector_state_buffer[curr_id] = TriState::BISECT_ELEMENT;
+    scene.allocation_indices_buffer[curr_id] = allocation_indices;
+    scene.bisector_state_buffer[curr_id] = TriState::BISECT_ELEMENT;
 }
 

@@ -3,8 +3,11 @@
 
 uint one_bit_to_id(uint index)
 {
-    let interior = pc.scene_next.cbt_interior;
-    let leaves = pc.scene_next.cbt_leaves;
+    let uniform_buffer = pc.uniform_buffer;
+    let scene = uniform_buffer.scene_next;
+    let interior = scene.cbt_interior;
+    let leaves = scene.cbt_leaves;
+
     if (index >= interior[0])
     {
         return INVALID_INDEX;
@@ -64,12 +67,14 @@ uint zero_bit_to_id(
     uint index, // index of the bit in the bitfield
 )
 {
-    let interior = pc.scene_next.cbt_interior;
-    let leaves = pc.scene_next.cbt_leaves;
+    let uniform_buffer = pc.uniform_buffer;
+    let scene = uniform_buffer.scene_next;
+    let interior = scene.cbt_interior;
+    let leaves = scene.cbt_leaves;
     var cap : uint = 1 << 17;
     if (index >= cap - interior[0])
     {
-        pc.dispatch_next.debug_data.curr_heapid = INVALID_INDEX;
+        uniform_buffer.dispatch_next.debug_data.curr_heapid = INVALID_INDEX;
         return INVALID_INDEX;
     }
     let interior_base_offset = num_internal / 2;
@@ -122,7 +127,7 @@ uint zero_bit_to_id(
 void set_bit(uint index)
 {
     // let leaves = pc.scene_next.cbt_leaves;
-    let leaves = pc.scene_next.cbt_leaves;
+    let leaves = pc.uniform_buffer.scene_next.cbt_leaves;
     uint leaf_idx = index / BITFIELD_INT_SIZE;
     uint bit_idx = index % BITFIELD_INT_SIZE;
 
@@ -133,7 +138,7 @@ void set_bit(uint index)
 void unset_bit(uint index)
 {
     // let leaves = pc.scene_next.cbt_leaves;
-    let leaves = pc.scene_next.cbt_leaves;
+    let leaves = pc.uniform_buffer.scene_next.cbt_leaves;
     uint leaf_idx = index / BITFIELD_INT_SIZE;
     uint bit_idx = index % BITFIELD_INT_SIZE;
 
@@ -142,9 +147,9 @@ void unset_bit(uint index)
 }
 
 float tri_area(float3 verts[3], float VdotN) {
-    var v0_projected = mul(float4(verts[0], 1), pc.view_project);
-    var v1_projected = mul(float4(verts[1], 1), pc.view_project);
-    var v2_projected = mul(float4(verts[2], 1), pc.view_project);
+    var v0_projected = mul(float4(verts[0], 1), pc.uniform_buffer.view_project);
+    var v1_projected = mul(float4(verts[1], 1), pc.uniform_buffer.view_project);
+    var v2_projected = mul(float4(verts[2], 1), pc.uniform_buffer.view_project);
     v0_projected.xy /= v0_projected.w;
     v1_projected.xy /= v1_projected.w;
     v2_projected.xy /= v2_projected.w;

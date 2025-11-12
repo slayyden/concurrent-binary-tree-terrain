@@ -4,15 +4,18 @@
 void prepare_merge(
     uint3 tid: SV_DispatchThreadID)
 {
-    if (tid.x >= pc.dispatch_next.want_merge_buffer_count.load())
+    let uniform_buffer = pc.uniform_buffer;
+    let scene = uniform_buffer.scene_next;
+    let dispatch = uniform_buffer.dispatch_next;
+    if (tid.x >= dispatch.want_merge_buffer_count.load())
     {
         return;
     }
-    let curr_id = pc.scene_next.want_merge_buffer[tid.x];
-    let neighbor_buffer = pc.scene_next.neighbors_buffer;
-    let heap_id_buffer = pc.scene_next.heapid_buffer;
-    let bisector_state_buffer = pc.scene_next.bisector_state_buffer;
-    let simplification_buffer = pc.scene_next.merging_bisector_buffer;
+    let curr_id = scene.want_merge_buffer[tid.x];
+    let neighbor_buffer = scene.neighbors_buffer;
+    let heap_id_buffer = scene.heapid_buffer;
+    let bisector_state_buffer = scene.bisector_state_buffer;
+    let simplification_buffer = scene.merging_bisector_buffer;
 
     uint curr_heapid = heap_id_buffer[curr_id];
     uint3 curr_neighbors = neighbor_buffer[curr_id];
@@ -77,7 +80,7 @@ void prepare_merge(
         neighbor_buffer[next_twin_id][edge_type] = curr_id;            // 5 -> 9 = 8
     }
 
-    uint base_slot = pc.dispatch_next.merging_bisector_count.add(num_pairs_to_merge);
+    uint base_slot = dispatch.merging_bisector_count.add(num_pairs_to_merge);
     simplification_buffer[base_slot] = curr_id;
 
     heap_id_buffer[next_id] = 0;

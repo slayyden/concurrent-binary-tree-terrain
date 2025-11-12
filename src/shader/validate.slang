@@ -4,15 +4,19 @@
 [numthreads(WORKGROUP_SIZE, 1, 1)]
 void validate(uint3 tid: SV_DispatchThreadID)
 {
-    let vertex_buffer = pc.scene_next.vertex_buffer;
-    if (tid.x >= pc.scene_next.cbt_interior[0])
+    let uniform_buffer = pc.uniform_buffer;
+    let scene = uniform_buffer.scene_next;
+    let dispatch = uniform_buffer.dispatch_next;
+
+    let vertex_buffer = scene.vertex_buffer;
+    if (tid.x >= scene.cbt_interior[0])
     {
         return;
     }
-    var debug_data : Ptr<DebugData> = &pc.dispatch_next.debug_data;
+    var debug_data : Ptr<DebugData> = &dispatch.debug_data;
 
-    let curr_id = pc.scene_next.curr_id_buffer[tid.x];
-    let neighbors = pc.scene_next.neighbors_buffer[curr_id];
+    let curr_id = scene.curr_id_buffer[tid.x];
+    let neighbors = scene.neighbors_buffer[curr_id];
     let vertices : float3[3] = {
         vertex_buffer[tid.x * 3],
         vertex_buffer[tid.x * 3 + 1],
@@ -28,8 +32,8 @@ void validate(uint3 tid: SV_DispatchThreadID)
             continue;
         }
 
-        let neighbor_heapid = pc.scene_next.heapid_buffer[neighbor];
-        let neighbor_vertices = heapid_to_vertices(neighbor_heapid);
+        let neighbor_heapid = scene.heapid_buffer[neighbor];
+        let neighbor_vertices = heapid_to_vertices(neighbor_heapid, scene);
 
         // c\n 0 1 2
         //   0 x x x
@@ -57,7 +61,7 @@ void validate(uint3 tid: SV_DispatchThreadID)
         }
         if (num_equal != 2)
         {
-            let original = debug_data.curr_heapid.compareExchange(0, pc.scene_next.heapid_buffer[curr_id]);
+            let original = debug_data.curr_heapid.compareExchange(0, scene.heapid_buffer[curr_id]);
             if (original == 0)
             {
                 debug_data.curr_id = curr_id;

@@ -44,10 +44,10 @@ uint[2] get_child_edge_types(uint command, uint parent_edge_type)
 }
 
 // Link sibling edges by updating their neighbor buffer entries
-void link_siblings(uint prev_sibling, uint next_sibling)
+void link_siblings(SceneData *scene, uint prev_sibling, uint next_sibling)
 {
-    (pc.scene_next.neighbors_buffer[prev_sibling])[NEXT] = next_sibling;
-    (pc.scene_next.neighbors_buffer[next_sibling])[PREV] = prev_sibling;
+    (scene.neighbors_buffer[prev_sibling])[NEXT] = next_sibling;
+    (scene.neighbors_buffer[next_sibling])[PREV] = prev_sibling;
 }
 
 [shader("compute")]
@@ -55,20 +55,23 @@ void link_siblings(uint prev_sibling, uint next_sibling)
 void update_pointers(
     int3 tid: SV_DispatchThreadID)
 {
-    if (tid.x >= pc.dispatch_next.splitting_buffer_count.load())
+    let uniform_buffer = pc.uniform_buffer;
+    let scene = uniform_buffer.scene_next;
+    let dispatch = uniform_buffer.dispatch_next;
+    if (tid.x >= dispatch.splitting_buffer_count.load())
     {
         return;
     }
-    let curr_id = pc.scene_next.splitting_buffer[tid.x];
-    let heap_id_buffer = pc.scene_next.heapid_buffer;
-    let allocation_indices_buffer = pc.scene_next.allocation_indices_buffer;
-    let bisector_command_buffer = (uint *)pc.scene_next.bisector_split_command_buffer;
-    let neighbor_buffer = pc.scene_next.neighbors_buffer;
+    let curr_id = scene.splitting_buffer[tid.x];
+    let heap_id_buffer = scene.heapid_buffer;
+    let allocation_indices_buffer = scene.allocation_indices_buffer;
+    let bisector_command_buffer = (uint *)scene.bisector_split_command_buffer;
+    let neighbor_buffer = scene.neighbors_buffer;
     let curr_heapid = heap_id_buffer[curr_id];
     let curr_command = bisector_command_buffer[curr_id];
 
     let neighbors = neighbor_buffer[curr_id];
-    let curr_allocation_indices = pc.scene_next.allocation_indices_buffer[curr_id];
+    let curr_allocation_indices = scene.allocation_indices_buffer[curr_id];
 
     // Clear current bit and set new ones
     unset_bit(curr_id);
@@ -115,7 +118,7 @@ void update_pointers(
                 neighbor_slot = neighbor_index;
                 if (slot == INVALID_INDEX)
                 {
-                    pc.dispatch_next.debug_data.curr_heapid.add(1);
+                    dispatch.debug_data.curr_heapid.add(1);
                 }
             }
             else
@@ -129,7 +132,7 @@ void update_pointers(
         neighbor_buffer[slot][edge_type] = neighbor_slot;
         if (neighbor_index != INVALID_INDEX && neighbor_slot == INVALID_INDEX)
         {
-            pc.dispatch_next.debug_data.curr_heapid.add(1);
+            dispatch.debug_data.curr_heapid.add(1);
         }
 
         if (bisector_slots[0] != bisector_slots[1])
@@ -140,7 +143,7 @@ void update_pointers(
             (neighbor_buffer[slot2])[edge_type2] = neighbor_slot2;
             if (neighbor_index != INVALID_INDEX && neighbor_slot2 == INVALID_INDEX)
             {
-                pc.dispatch_next.debug_data.curr_heapid.add(1);
+                dispatch.debug_data.curr_heapid.add(1);
             }
         }
     }
@@ -152,13 +155,13 @@ void update_pointers(
         {
             if (curr_allocation_indices[i] == INVALID_INDEX)
             {
-                pc.dispatch_next.debug_data.curr_heapid.add(1);
+                dispatch.debug_data.curr_heapid.add(1);
             }
         }
         heap_id_buffer[curr_allocation_indices[1]] = 2 * curr_heapid + 0;
         heap_id_buffer[curr_allocation_indices[0]] = 2 * curr_heapid + 1;
 
-        link_siblings(curr_allocation_indices[0], curr_allocation_indices[1]);
+        link_siblings(scene, curr_allocation_indices[0], curr_allocation_indices[1]);
     }
     else if (curr_command == RIGHT_DOUBLE_SPLIT)
     {
@@ -166,10 +169,10 @@ void update_pointers(
         {
             if (curr_allocation_indices[i] == INVALID_INDEX)
             {
-                pc.dispatch_next.debug_data.curr_heapid.add(1);
+                dispatch.debug_data.curr_heapid.add(1);
             }
         }
-        link_siblings(curr_allocation_indices[0], curr_allocation_indices[2]);
+        link_siblings(scene, curr_allocation_indices[0], curr_allocation_indices[2]);
         (neighbor_buffer[curr_allocation_indices[0]])[TWIN] = curr_allocation_indices[1];
         (neighbor_buffer[curr_allocation_indices[1]])[PREV] = curr_allocation_indices[0];
 
@@ -183,10 +186,10 @@ void update_pointers(
         {
             if (curr_allocation_indices[i] == INVALID_INDEX)
             {
-                pc.dispatch_next.debug_data.curr_heapid.add(1);
+                dispatch.debug_data.curr_heapid.add(1);
             }
         }
-        link_siblings(curr_allocation_indices[1], curr_allocation_indices[2]);
+        link_siblings(scene, curr_allocation_indices[1], curr_allocation_indices[2]);
         (neighbor_buffer[curr_allocation_indices[2]])[TWIN] = curr_allocation_indices[0];
         (neighbor_buffer[curr_allocation_indices[0]])[NEXT] = curr_allocation_indices[2];
 
@@ -200,12 +203,12 @@ void update_pointers(
         {
             if (curr_allocation_indices[i] == INVALID_INDEX)
             {
-                pc.dispatch_next.debug_data.curr_heapid.add(1);
+                dispatch.debug_data.curr_heapid.add(1);
             }
         }
         // TRIPLE_SPLIT
-        link_siblings(curr_allocation_indices[1], curr_allocation_indices[3]);
-        link_siblings(curr_allocation_indices[0], curr_allocation_indices[2]);
+        link_siblings(scene, curr_allocation_indices[1], curr_allocation_indices[3]);
+        link_siblings(scene, curr_allocation_indices[0], curr_allocation_indices[2]);
         (neighbor_buffer[curr_allocation_indices[3]])[TWIN] = curr_allocation_indices[0];
         (neighbor_buffer[curr_allocation_indices[0]])[TWIN] = curr_allocation_indices[3];
 

@@ -223,7 +223,7 @@ impl State {
             let (prev_scene_idx, next_scene_idx) = if self.divide {
                 let prev = self.num_iters as usize % NUM_ROLLBACK_FRAMES;
                 // advance to next frame
-                let next = self.num_iters as usize + 1 % NUM_ROLLBACK_FRAMES;
+                let next = (self.num_iters as usize + 1) % NUM_ROLLBACK_FRAMES;
                 (prev, next)
             } else if self.num_iters == self.curr_iter {
                 // no new frame, so peek the previous one
