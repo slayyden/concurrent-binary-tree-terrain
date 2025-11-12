@@ -24,18 +24,6 @@ use winit::{
     window::{Window, WindowId},
 };
 
-#[repr(C)]
-#[derive(Debug)]
-struct PushConstants {
-    view_project: Mat4,
-    scene: vk::DeviceAddress,
-    dispatch: vk::DeviceAddress,
-
-    camera_position: Vec3A,
-    lookdir: Vec3A,
-    swapback: u32,
-}
-
 // can be more than 1 for debugging
 const NUM_ROLLBACK_FRAMES: usize = 1;
 
@@ -229,60 +217,77 @@ impl State {
                 }
             };
 
-            let (prev_scene, next_scene, rendering_mode) = if self.divide {
-                // get a "mutable reference" to the correct scene
-                let (prev_scene, next_scene) = {
-                    // get prev and next scenes
-                    let prev_idx = self.num_iters % NUM_ROLLBACK_FRAMES as i32;
-                    let next_idx = (self.num_iters + 1) % NUM_ROLLBACK_FRAMES as i32;
+            // if dividing, the next scene is the scene we are generating for the frame
+            // regardless, the "next scene" is the one we render
+            // the "prev scene" is used for debug information when NUM_ROLLBACK_FRAMES > 1
+            let (prev_scene_idx, next_scene_idx) = if self.divide {
+                let prev = self.num_iters as usize % NUM_ROLLBACK_FRAMES;
+                // advance to next frame
+                let next = self.num_iters as usize + 1 % NUM_ROLLBACK_FRAMES;
+                (prev, next)
+            } else if self.num_iters == self.curr_iter {
+                // no new frame, so peek the previous one
+                let prev =
+                    (self.num_iters as usize + NUM_ROLLBACK_FRAMES - 1) % NUM_ROLLBACK_FRAMES;
+                let next = self.num_iters as usize % NUM_ROLLBACK_FRAMES;
+                (prev, next)
+            } else {
+                // edge case: when viewing the lowest frame, peek the second lowest
+                let prev = self.curr_iter as usize % NUM_ROLLBACK_FRAMES;
+                let next = (self.curr_iter as usize + 1) % NUM_ROLLBACK_FRAMES;
+                (prev, next)
+            };
+            let prev_scene = &self.cbt_scenes[prev_scene_idx];
+            let next_scene = &self.cbt_scenes[next_scene_idx];
+            let rendering_mode = if self.divide {
+                RenderingMode::Default
+            } else {
+                if self.num_iters == self.curr_iter {
+                    RenderingMode::Default
+                } else {
+                    RenderingMode::RollbackDefault
+                }
+            };
+            let uniform_buffer_data =
+                get_uniform_buffer_data(prev_scene, next_scene, &self.camera, rendering_mode);
+            self.argument_buffer.copy_from_slice(&[uniform_buffer_data]);
 
-                    let prev_cbt_scene = &self.cbt_scenes[prev_idx as usize];
-                    let next_cbt_scene = &self.cbt_scenes[next_idx as usize];
+            let push_constants = PushConstants {
+                uniform_buffer: self.argument_buffer.device_address(),
+            };
+            dev.cmd_push_constants(
+                *cmdbuf,
+                self.pipeline_layout,
+                vk::ShaderStageFlags::VERTEX
+                    | vk::ShaderStageFlags::FRAGMENT
+                    | vk::ShaderStageFlags::COMPUTE,
+                0,
+                byteslice(&push_constants),
+            );
+            if self.divide {
+                // copy data to start next scene
+                if NUM_ROLLBACK_FRAMES > 1 {
+                    // copy cbt data buffers
+                    zip(
+                        prev_scene.scene_buffer_handles.gpu_slices_iter(),
+                        next_scene.scene_buffer_handles.gpu_slices_iter(),
+                    )
+                    .for_each(|(prev, next)| {
+                        let region = vk::BufferCopy::default().size(prev.size_in_bytes);
+                        dev.cmd_copy_buffer(*cmdbuf, prev.gpu_buffer, next.gpu_buffer, &[region]);
+                    });
 
-                    // copy data to start next scene
-                    if NUM_ROLLBACK_FRAMES > 1 {
-                        // copy cbt data buffers
-                        zip(
-                            prev_cbt_scene.scene_buffer_handles.gpu_slices_iter(),
-                            next_cbt_scene.scene_buffer_handles.gpu_slices_iter(),
-                        )
-                        .for_each(|(prev, next)| {
-                            let region = vk::BufferCopy::default().size(prev.size_in_bytes);
-                            dev.cmd_copy_buffer(
-                                *cmdbuf,
-                                prev.gpu_buffer,
-                                next.gpu_buffer,
-                                &[region],
-                            );
-                        });
-
-                        // copy dispatch
-                        let region = vk::BufferCopy::default()
-                            .size(prev_cbt_scene.dispatch_buffer.size_in_bytes());
-                        dev.cmd_copy_buffer(
-                            *cmdbuf,
-                            prev_cbt_scene.dispatch_buffer.buffer(),
-                            next_cbt_scene.dispatch_buffer.buffer(),
-                            &[region],
-                        );
-                        copy_compute_read_memory_barrier();
-                    }
-                    (prev_cbt_scene, next_cbt_scene)
-                };
-                dev.cmd_push_constants(
-                    *cmdbuf,
-                    self.pipeline_layout,
-                    vk::ShaderStageFlags::VERTEX
-                        | vk::ShaderStageFlags::FRAGMENT
-                        | vk::ShaderStageFlags::COMPUTE,
-                    0,
-                    byteslice(&get_push_constants(
-                        prev_scene,
-                        next_scene,
-                        &self.camera,
-                        RenderingMode::Default, // compute doesn't care about rendering mode
-                    )),
-                );
+                    // copy dispatch
+                    let region =
+                        vk::BufferCopy::default().size(prev_scene.dispatch_buffer.size_in_bytes());
+                    dev.cmd_copy_buffer(
+                        *cmdbuf,
+                        prev_scene.dispatch_buffer.buffer(),
+                        next_scene.dispatch_buffer.buffer(),
+                        &[region],
+                    );
+                    copy_compute_read_memory_barrier();
+                }
                 // COMPUTE
                 // classify
                 {
@@ -388,9 +393,9 @@ impl State {
                     next_scene.dispatch_buffer.buffer(),
                     offset_of!(DispatchDataGPU, dispatch_prepare_merge_command) as u64,
                 );
+
                 compute_write_compute_read_memory_barrier();
 
-                // compute -> compute global memory barrier
                 // merge
                 dev.cmd_bind_pipeline(
                     *cmdbuf,
@@ -428,27 +433,7 @@ impl State {
                 );
                 // compute -> graphics global memory barrier AND indirect read
                 compute_write_graphics_read_memory_barrier();
-                compute_write_compute_read_memory_barrier();
-                (prev_scene, next_scene, RenderingMode::Default)
-            } else {
-                if self.curr_iter == self.num_iters {
-                    (
-                        &self.cbt_scenes[(self.num_iters as usize + NUM_ROLLBACK_FRAMES - 1)
-                            % NUM_ROLLBACK_FRAMES],
-                        &self.cbt_scenes[self.num_iters as usize % NUM_ROLLBACK_FRAMES],
-                        RenderingMode::Default,
-                    )
-                } else {
-                    (
-                        &self.cbt_scenes[self.curr_iter as usize % NUM_ROLLBACK_FRAMES],
-                        &self.cbt_scenes[(self.curr_iter as usize + 1) % NUM_ROLLBACK_FRAMES],
-                        match self.rendering_mode {
-                            RenderingMode::Default => RenderingMode::RollbackDefault,
-                            _ => self.rendering_mode,
-                        },
-                    )
-                }
-            };
+            }
             dev.cmd_begin_rendering(*cmdbuf, &rendering_info);
 
             // RENDERING CORE
@@ -493,21 +478,6 @@ impl State {
                     prev_scene
                 };
 
-                let push_constants =
-                    get_push_constants(prev_scene, next_scene, &self.camera, rendering_mode);
-                // println!("rendering_mode: {:?}", push_constants.rendering_mode);
-                let push_constant_bytes = byteslice(&push_constants);
-                // push constants
-                dev.cmd_push_constants(
-                    *cmdbuf,
-                    self.pipeline_layout,
-                    vk::ShaderStageFlags::VERTEX
-                        | vk::ShaderStageFlags::FRAGMENT
-                        | vk::ShaderStageFlags::COMPUTE,
-                    0,
-                    push_constant_bytes,
-                );
-                assert_eq!(push_constant_bytes.len(), 128);
                 // draw the triangles
                 dev.cmd_draw_indirect(
                     *cmdbuf,

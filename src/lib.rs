@@ -128,10 +128,14 @@ impl<T: Copy> UniformBuffer<T> {
         Self(allocated_buffer)
     }
 
-    fn copy_from_slice(&mut self, data: &[T]) {
+    pub fn copy_from_slice(&mut self, data: &[T]) {
         unsafe {
             self.0.mapped_slice().copy_from_slice(data);
         }
+    }
+
+    pub fn device_address(&self) -> vk::DeviceAddress {
+        self.0.device_address()
     }
 }
 
@@ -1337,16 +1341,18 @@ pub struct CBTScene {
 #[repr(C)]
 #[derive(Debug)]
 pub struct PushConstants {
-    pub view_project: Mat4,
-    pub scene_prev: vk::DeviceAddress,
-    pub scene_next: vk::DeviceAddress,
-    pub dispatch_prev: vk::DeviceAddress,
-    pub dispatch_next: vk::DeviceAddress,
-    pub camera_position: Vec3,
-    pub lookdir: Vec3,
-    pub rendering_mode: RenderingMode,
+    // pub view_project: Mat4,
+    // pub scene_prev: vk::DeviceAddress,
+    // pub scene_next: vk::DeviceAddress,
+    // pub dispatch_prev: vk::DeviceAddress,
+    // pub dispatch_next: vk::DeviceAddress,
+    pub uniform_buffer: vk::DeviceAddress,
+    // pub camera_position: Vec3,
+    // pub lookdir: Vec3,
+    // pub rendering_mode: RenderingMode,
 }
 
+/*
 pub fn get_push_constants(
     prev_scene: &CBTScene,
     next_scene: &CBTScene,
@@ -1364,7 +1370,7 @@ pub fn get_push_constants(
         lookdir: Vec3::from(camera.lookdir()),
         rendering_mode: rendering_mode,
     }
-}
+}*/
 
 // half of (change in width/height of frustum) / (change in depth)
 #[repr(C)]
