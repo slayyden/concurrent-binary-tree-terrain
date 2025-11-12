@@ -1384,6 +1384,7 @@ pub struct FrustumSlopes {
 #[derive(Debug, Copy, Clone)]
 pub struct UniformBufferData {
     pub view_project: Mat4,
+    pub view: Mat4,
     pub scene_prev: vk::DeviceAddress,
     pub scene_next: vk::DeviceAddress,
     pub dispatch_prev: vk::DeviceAddress,
@@ -1406,6 +1407,7 @@ pub fn get_uniform_buffer_data(
     // prev and next scene MAY alias
     UniformBufferData {
         view_project: camera.projection_matrix() * camera.view_matrix(),
+        view: camera.view_matrix(),
         scene_prev: prev_scene.scene_buffer.device_address(),
         dispatch_prev: prev_scene.dispatch_buffer.device_address(),
         scene_next: next_scene.scene_buffer.device_address(),

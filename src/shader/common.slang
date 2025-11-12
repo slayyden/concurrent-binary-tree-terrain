@@ -101,6 +101,7 @@ struct FrustumSlopes {
 
 struct UniformBufferData {
     float4x4 view_project;
+    float4x4 view;
     SceneData *scene_prev; 
     SceneData *scene_next;
     DispatchData *dispatch_prev;
